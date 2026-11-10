@@ -43,7 +43,7 @@ from .rescue_api import router as rescue_router
 from .cases import router as cases_router
 from .voice import router as voice_router
 from .frontend import decorate
-from . import case_store, runtime
+from . import case_store, runtime, public_cache
 from .access import owner, issue, require_memory
 from .conversation_api import _safe_message
 
@@ -179,11 +179,17 @@ def create_app(planner=None, extractor=None, agent=None, discoverer_factory: Cal
 
     @app.get("/api/catalog")
     def catalog():
-        return [{"id": sid, "name": s["name"], "dependencies": [{"id": d["id"], "label": d["label"]} for d in (s.get("dependencies") or [])],
+        cache_key = public_cache.public_key("catalog")
+        cached = public_cache.get_public(cache_key)
+        if cached is not None:
+            return cached
+        result = [{"id": sid, "name": s["name"], "dependencies": [{"id": d["id"], "label": d["label"]} for d in (s.get("dependencies") or [])],
                  "rescue_supported": bool(
             s.get("actions") and s.get("dependencies") is not None
             and (s.get("origin") != "discovered" or s.get("verified", False)))}
             for sid, s in catalog_loader().items()]
+        public_cache.put_public(cache_key, result)
+        return result
 
     @app.get("/api/form")
     def form():
@@ -283,17 +289,23 @@ def create_app(planner=None, extractor=None, agent=None, discoverer_factory: Cal
 
     @app.get("/api/schemes/{scheme_id}")
     def scheme(scheme_id: str):
+        cache_key = public_cache.public_key("scheme", scheme_id=scheme_id)
+        cached = public_cache.get_public(cache_key)
+        if cached is not None:
+            return cached
         s = catalog_loader().get(scheme_id)
         if s is None:
             raise HTTPException(404, "scheme not found")
         rules = (s["eligibility"].get("all") or []) + (s["eligibility"].get("any") or [])
-        return {"id": scheme_id, "name": s["name"], "source_url": s["source_url"],
+        result = {"id": scheme_id, "name": s["name"], "source_url": s["source_url"],
                 "source_site": s.get("source_site", ""), "verified": s.get("verified", s.get("origin") != "discovered"),
                 "awareness": awareness(s), "agency": s.get("agency_name") or s.get("ministry") or "",
                 "benefit": s.get("benefit_summary", ""), "how_to_apply": s.get("how_to_apply", ""),
                 "rules": [{"rule": r.get("reason", ""), "quote": r.get("source_quote", "")} for r in rules],
                 "check_yourself": s.get("unmapped_criteria", []),
                 "documents": [d["name"] for d in s.get("documents") or []]}
+        public_cache.put_public(cache_key, result)
+        return result
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app
