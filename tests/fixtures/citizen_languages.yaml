@@ -1,0 +1,11 @@
+# Mocked extraction fixtures; not a claim of verified hosted-model/translation quality.
+en: {text: 'I am 62, retired in Maharashtra and need financial assistance.', age: 62, category: income}
+hi: {text: 'मेरी उम्र 62 है। मैं सेवानिवृत्त हूँ और आर्थिक मदद चाहिए।', age: 62, category: income}
+mr: {text: 'माझे वय 62 आहे. मी निवृत्त आहे आणि आर्थिक मदत हवी आहे.', age: 62, category: income}
+bn: {text: 'আমার বয়স ৬২। আমি অবসরপ্রাপ্ত এবং আর্থিক সহায়তা চাই।', age: 62, category: income}
+ta: {text: 'எனக்கு 62 வயது. நான் ஓய்வு பெற்றவன். நிதி உதவி வேண்டும்.', age: 62, category: income}
+te: {text: 'నా వయస్సు 62. నేను పదవీ విరమణ చేశాను. ఆర్థిక సహాయం కావాలి.', age: 62, category: income}
+kn: {text: 'ನನಗೆ 62 ವರ್ಷ. ನಾನು ನಿವೃತ್ತನಾಗಿದ್ದೇನೆ. ಆರ್ಥಿಕ ಸಹಾಯ ಬೇಕು.', age: 62, category: income}
+ml: {text: 'എനിക്ക് 62 വയസ്സുണ്ട്. ഞാൻ വിരമിച്ചു. സാമ്പത്തിക സഹായം വേണം.', age: 62, category: income}
+gu: {text: 'મારી ઉંમર 62 છે. હું નિવૃત્ત છું અને આર્થિક મદદ જોઈએ છે.', age: 62, category: income}
+pa: {text: 'ਮੇਰੀ ਉਮਰ 62 ਹੈ। ਮੈਂ ਸੇਵਾਮੁਕਤ ਹਾਂ ਅਤੇ ਵਿੱਤੀ ਮਦਦ ਚਾਹੀਦੀ ਹੈ।', age: 62, category: income}

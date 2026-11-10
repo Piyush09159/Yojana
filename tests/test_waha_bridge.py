@@ -4,6 +4,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 from web.waha_bridge import router
+from test_deployment_v24 import persistent
 
 app = FastAPI()
 app.include_router(router)
@@ -17,7 +18,7 @@ def test_disabled_by_default(monkeypatch):
     monkeypatch.delenv("YOJANA_WAHA_ENABLED", raising=False)
     assert _post({}).status_code == 503
 
-def test_rejects_wrong_secret_and_ignores_group(monkeypatch):
+def test_rejects_wrong_secret_and_ignores_group(monkeypatch, persistent):
     monkeypatch.setenv("YOJANA_WAHA_ENABLED", "true")
     monkeypatch.setenv("YOJANA_WAHA_WEBHOOK_SECRET", SECRET)
     monkeypatch.setenv("WAHA_BASE_URL", "http://localhost:3000")
@@ -25,7 +26,7 @@ def test_rejects_wrong_secret_and_ignores_group(monkeypatch):
     assert _post({}, secret="wrong").status_code == 403
     assert _post({"from": "123@g.us", "body": "hello", "id": "group-test"}).json()["status"] == "ignored"
 
-def test_no_unsolicited_response(monkeypatch):
+def test_no_unsolicited_response(monkeypatch, persistent):
     monkeypatch.setenv("YOJANA_WAHA_ENABLED", "true")
     monkeypatch.setenv("YOJANA_WAHA_WEBHOOK_SECRET", SECRET)
     monkeypatch.setenv("WAHA_BASE_URL", "http://localhost:3000")

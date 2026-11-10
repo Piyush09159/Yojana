@@ -53,7 +53,7 @@ def test_lesser_known_excludes_flagships_and_prefers_obscure():
 
 def test_district_rule():
     s = catalog_with_local()["zp_widow_beed"]
-    assert evaluate_scheme(s, PROFILE).status == "eligible"
+    assert evaluate_scheme(s, PROFILE).status == "eligible_check_manually"  # discovered, not independently verified
     assert evaluate_scheme(s, {**PROFILE, "district": "pune"}).status == "ineligible"
 
 

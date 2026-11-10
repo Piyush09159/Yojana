@@ -1,0 +1,10 @@
+# Synthetic personas only; no real citizen information or credentials.
+en:
+  intro: I am 62, retired in Maharashtra and need financial help.
+  income: Our annual family income is 40000 rupees.
+hi:
+  intro: मेरी उम्र 62 है। मैं महाराष्ट्र में रहता हूँ और सेवानिवृत्त हूँ। आर्थिक सहायता चाहिए।
+  income: हमारे परिवार की सालाना आय 40000 रुपये है।
+mr:
+  intro: माझे वय 62 आहे. मी महाराष्ट्रात राहतो आणि निवृत्त आहे. आर्थिक मदत हवी आहे.
+  income: आमच्या कुटुंबाचे वार्षिक उत्पन्न 40000 रुपये आहे.

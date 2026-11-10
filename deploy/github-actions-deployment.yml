@@ -1,0 +1,50 @@
+name: Deployment validation
+on:
+  push:
+    branches: [main, feature/v2.4-live-ai-waha]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  postgres-and-frontend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6-bookworm
+        env:
+          POSTGRES_USER: yojana
+          POSTGRES_PASSWORD: fixture-ci-password
+          POSTGRES_DB: yojana_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U yojana -d yojana_test" --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: python -m pip install -r requirements-deploy.txt
+      - run: python -m pip check
+      - run: python -m pytest -q
+        env:
+          TEST_POSTGRES_URL: postgresql://yojana:fixture-ci-password@localhost:5432/yojana_test
+      - run: python scripts/sync_frontend.py --check
+      - run: node frontend/build.mjs
+        env:
+          BACKEND_ORIGIN: https://backend.invalid
+      - run: docker build -t yojana-pilot:ci .
+      - name: Boot image against PostgreSQL and check readiness
+        shell: bash
+        run: |
+          docker run -d --name yojana-ci --network host \
+            -e DEPLOYMENT_MODE=production -e DATABASE_URL="$TEST_POSTGRES_URL" \
+            -e SESSION_AUTH_REQUIRED=true -e SESSION_SIGNING_KEY=fixture-ci-signing-key-at-least-32-characters \
+            -e APP_ORIGINS=https://frontend.invalid yojana-pilot:ci
+          trap 'docker logs yojana-ci; docker rm -f yojana-ci' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8000/readyz; then break; fi
+            sleep 2
+          done
+          curl --fail http://127.0.0.1:8000/readyz
+        env:
+          TEST_POSTGRES_URL: postgresql://yojana:fixture-ci-password@localhost:5432/yojana_test

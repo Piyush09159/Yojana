@@ -26,7 +26,8 @@ class OpenAIProvider(ProviderBase):
         if client is None:
             # local servers such as Ollama need no key, but the SDK insists on one
             api_key = api_key or os.getenv("OPENAI_API_KEY") or ("not-needed" if base_url else None)
-            client = OpenAI(api_key=api_key, base_url=base_url)
+            client = OpenAI(api_key=api_key, base_url=base_url,
+                            timeout=float(os.getenv('LLM_TIMEOUT_SECONDS', '30')), max_retries=0)
         self.client = client
 
     def _call(self, messages, system, json_mode, temperature, max_tokens) -> RawResult:

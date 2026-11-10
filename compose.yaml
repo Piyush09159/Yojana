@@ -1,0 +1,33 @@
+# Local/staging equivalent. EasyPanel normally owns PostgreSQL and each app separately.
+services:
+  postgres:
+    image: postgres:17.6-bookworm
+    environment:
+      POSTGRES_DB: yojana
+      POSTGRES_USER: yojana
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U yojana -d yojana']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 768m
+    restart: unless-stopped
+  backend:
+    build: .
+    env_file: ${DEPLOY_ENV_FILE:-deploy/.env}
+    environment:
+      DATABASE_URL: postgresql://yojana:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/yojana
+    ports: ['127.0.0.1:${BACKEND_BIND_PORT:-8000}:8000']
+    depends_on:
+      postgres: {condition: service_healthy}
+    mem_limit: 1536m
+    cpus: 1.0
+    read_only: true
+    tmpfs: ['/runtime:uid=10001,gid=10001,size=256m', '/tmp:size=128m']
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+volumes:
+  postgres-data:

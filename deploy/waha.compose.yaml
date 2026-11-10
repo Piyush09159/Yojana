@@ -1,0 +1,39 @@
+# Separate service; attach backend to this private network when running plain Compose.
+# For EasyPanel Apps, use its private service hostname instead, never a public API port.
+services:
+  waha:
+    image: ${WAHA_IMAGE:?Set a reviewed devlikeapro/waha immutable tag or digest}
+    restart: unless-stopped
+    ports: ['127.0.0.1:3000:3000']
+    volumes: [waha-sessions:/app/.sessions]
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:?Set a strong WAHA API key}
+      WAHA_DASHBOARD_ENABLED: 'true'
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:?Set dashboard username}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?Set dashboard password}
+      WHATSAPP_SWAGGER_USERNAME: ${WAHA_DASHBOARD_USERNAME}
+      WHATSAPP_SWAGGER_PASSWORD: ${WAHA_DASHBOARD_PASSWORD}
+      WAHA_PRINT_QR: 'false'
+      # Must produce media.url on the same private origin as backend WAHA_BASE_URL.
+      WAHA_BASE_URL: ${WAHA_BASE_URL:?Set the private WAHA origin}
+      WAHA_EVENTS_DOWNLOAD_MEDIA: 'true'
+      WAHA_EVENTS_DOWNLOAD_MEDIA_MIMETYPES: audio
+      WHATSAPP_FILES_FOLDER: /tmp/whatsapp-files
+      WHATSAPP_FILES_LIFETIME: '180'
+      WHATSAPP_HOOK_URL: ${WAHA_WEBHOOK_URL:?Set the HTTPS backend /api/webhooks/waha URL}
+      WHATSAPP_HOOK_EVENTS: message
+      WHATSAPP_HOOK_HMAC_KEY: ${WAHA_HMAC_KEY:?Set the matching HMAC key}
+      WHATSAPP_HOOK_RETRIES_POLICY: exponential
+      WHATSAPP_HOOK_RETRIES_DELAY_SECONDS: '2'
+      WHATSAPP_HOOK_RETRIES_ATTEMPTS: '8'
+    mem_limit: 2048m
+    # Audio remains ephemeral; never mount this directory as a durable volume.
+    tmpfs: ['/tmp/whatsapp-files:size=64m,mode=1777']
+    cpus: 1.0
+    security_opt: [no-new-privileges:true]
+    networks: [waha-private]
+volumes:
+  waha-sessions:
+networks:
+  waha-private:
+    name: yojana-waha-private

@@ -214,7 +214,7 @@ def _discovered(**over):
 def test_state_rule_and_statuses():
     s = _discovered()
     base = {"gender": "female", "marital_status": "widowed", "age": 50, "annual_family_income_inr": 20000}
-    assert evaluate_scheme(s, {**base, "state": "maharashtra"}).status == "eligible"
+    assert evaluate_scheme(s, {**base, "state": "maharashtra"}).status == "eligible_check_manually"  # extraction is unreviewed
     assert evaluate_scheme(s, {**base, "state": "kerala"}).status == "ineligible"
     assert evaluate_scheme(s, base).missing_fields == ["state"]
     r = evaluate_scheme({**s, "unmapped_criteria": ["Resident for 15 years"]}, {**base, "state": "maharashtra"})

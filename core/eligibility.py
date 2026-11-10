@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .loader import load_schemes
+from .cohorts import effective_scheme
 
 PASS, FAIL, UNKNOWN = "pass", "fail", "unknown"
 # where a scheme applies, not who qualifies for it
@@ -60,8 +61,8 @@ class SchemeResult:
         if self.status == "eligible":
             return f"Eligible for {self.name}."
         if self.status == "eligible_check_manually":
-            return (f"Likely eligible for {self.name}; also check: "
-                    f"{'; '.join(self.unmapped_criteria)}.")
+            return (f"Eligibility not confirmed for {self.name}; verify: "
+                    f"{'; '.join(self.unmapped_criteria) or 'unreviewed source extraction; confirm all mandatory conditions on the official page'}.")
         if self.status == "check_manually":
             return f"{self.name}: rules could not be read automatically; check the official page."
         if self.status == "near_miss":
@@ -129,6 +130,7 @@ def _state_rule(state: str) -> dict:
 
 
 def evaluate_scheme(scheme: dict, profile: dict) -> SchemeResult:
+    scheme = effective_scheme(scheme)
     elig = scheme["eligibility"]
     all_specs = list(elig.get("all") or [])
     if scheme.get("district"):
@@ -167,7 +169,7 @@ def evaluate_scheme(scheme: dict, profile: dict) -> SchemeResult:
                 all_failed.append(closest[0])
 
     res.failed_rules = all_failed
-    res.missing_fields = [r.field for r in all_unknown]
+    res.missing_fields = list(dict.fromkeys(r.field for r in all_unknown))
 
     hard_fails = [r for r in all_failed if not r.near]
     if hard_fails:
@@ -182,6 +184,8 @@ def evaluate_scheme(scheme: dict, profile: dict) -> SchemeResult:
         # too little machine-readable evidence: more open conditions than rules we could check
         res.status = "check_manually"
     elif res.unmapped_criteria:
+        res.status = "eligible_check_manually"
+    elif not res.verified:
         res.status = "eligible_check_manually"
     else:
         res.status = "eligible"

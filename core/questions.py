@@ -16,6 +16,7 @@ from .awareness import OBSCURITY, awareness
 from .eligibility import check_eligibility
 from .fields import load_fields
 from .loader import load_questions, load_schemes
+from .relevance import relevance
 
 SYNTHETIC_TYPES = {"bool": "yes_no", "int": "number", "number": "number", "enum": "choice", "str": "text"}
 
@@ -43,6 +44,9 @@ def next_best_question(profile: dict, schemes: dict | None = None,
                        questions: tuple | None = None) -> dict | None:
     """Return the next question dict, or None if nothing useful is left to ask."""
     schemes = schemes or load_schemes()
+    if profile.get('_intent') or (profile.get('age') or 0) >= 60 or profile.get('occupation') == 'retired':
+        candidates = question_candidates(profile, schemes, questions, limit=1)
+        return candidates[0]['question'] if candidates else None
     questions = questions or load_questions()
     results = check_eligibility(profile, schemes)
     undecided = [r for r in results if r.status == "needs_info"]
@@ -101,15 +105,19 @@ def question_candidates(profile: dict, schemes: dict, questions: tuple | None = 
     for r in results:
         if r.status != "needs_info":
             continue
+        tier = relevance(schemes[r.scheme_id], profile)
+        if tier == 0:
+            continue
         w = scheme_weight(schemes[r.scheme_id])
         for f in set(r.missing_fields):
             q = by_field.get(f)
             if q is None or profile.get(f) is not None:
                 continue
-            g = gains.setdefault(f, {"field": f, "question": q, "score": 0.0, "schemes": []})
+            g = gains.setdefault(f, {"field": f, "question": q, "score": 0.0, "schemes": [], 'relevance': 0})
+            g['relevance'] = max(g['relevance'], tier)
             g["score"] += w
             g["schemes"].append(r.name)
-    ranked = sorted(gains.values(), key=lambda g: (-g["score"], g["field"]))
+    ranked = sorted(gains.values(), key=lambda g: (-g['relevance'], -g["score"], g["field"]))
     for g in ranked:
         g["score"] = round(g["score"], 2)
     return ranked[:limit]

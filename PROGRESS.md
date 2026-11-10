@@ -10,15 +10,96 @@ This file is the project's history, newest entry first. Read it top to bottom to
 
 | | |
 |---|---|
-| Version | v2.3 consolidated website |
-| Last updated | 2026-10-29 |
-| Tests | 237 passed, 0 failed (standard Python 3.13) |
-| Phase | Public landing page, citizen dashboard, conversational API, Rescue and WAHA adapter; audited repository consolidation |
+| Version | v2.5 citizen experience (live deployment unverified) |
+| Last updated | 2026-10-31 |
+| Tests | 390 passed, 1 skipped, 0 failed (real PostgreSQL requires an external test server) |
+| Phase | AgentX WhatsApp hotfix: NOWEB personal LID addressing, preserved activation/voice/consent controls |
 | Schemes | 267 public scheme records; 1,008 crawl records; catalog preserved unchanged |
 | Eval | eligibility 36/36 on 12 personas; start-with 12/12; name matcher P=1.00 R=1.00 on 20 pairs (small self-labelled sets) |
-| Next task | V2.4 planning only after repository integration; live models, persistent case memory and WAHA remain unvalidated |
+| Next task | Owner review/publication; Docker and PostgreSQL validation; EasyPanel/Vercel setup and genuine hosted inference/WAHA checks |
 
 ---
+
+## NOWEB personal LID sender hotfix: 2026-10-31
+
+**Who:** Codex, under repository-owner instructions.
+
+**Root cause / change:** The signed persistent webhook rejected personal `@lid` senders because its allowlist matched only phone-number `@c.us` addresses. Accept bounded ASCII numeric personal LIDs as well as existing phone JIDs. Preserve the full incoming chat ID and suffix for case hashing, reply requests and encrypted summary routes; never guess a phone number from an opaque LID. Groups, status/broadcast/newsletter IDs, malformed/device-qualified IDs, bot echoes and group-context flags remain rejected. No schema, credential, existing database/session, frontend or eligibility changes.
+
+**Regression evidence:** Signed inbound `yojana` activation exercises the real `_send` adapter with stubbed HTTP and asserts exact `/api/sendText` recipient/session/menu. Covers repeated events, pending reply retry, distinct LIDs, the same digits under different suffixes, conflicting event ownership, scoped STOP, HMAC rejection, voice-note same-case deduplication, browser one-time links, cross-user case authorization and consent-based summary routing. Final full suite: **390 passed, 0 failed, 1 skipped** in 113.19 seconds, including 30 LID regressions. Real PostgreSQL remains skipped without `TEST_POSTGRES_URL`. Python compilation and diff checks passed.
+
+**Engine contract:** Owner confirms deployed NOWEB CORE 2026.10.1 receives personal LIDs. Checked the matching upstream [POST /api/sendText controller](https://github.com/devlikeapro/waha/blob/2026.10.1/src/api/chatting.controller.ts#L73-L82), [NOWEB sendText method](https://github.com/devlikeapro/waha/blob/2026.10.1/src/core/engines/noweb/session.noweb.core.ts#L1080-L1100), and [LID-preserving JID conversion](https://github.com/devlikeapro/waha/blob/2026.10.1/src/core/utils/jids.ts#L56-L68); official [send-message documentation](https://waha.devlike.pro/docs/how-to/send-messages/#chatid) lists LID chat targets. This establishes source-contract support, not acceptance or delivery on the deployed instance.
+
+**Live acceptance remains UNVERIFIED:** No live `WAHA_BASE_URL` / `WAHA_API_KEY` is configured in this environment. After deploying the reviewed fix to the existing service, send `yojana` from a controlled personal LID account, confirm its exact `chatId` is submitted to `/api/sendText`, inspect the actual response and confirm menu receipt on that same handset. Repeat the event without another reply, try another controlled sender, and verify STOP/voice notes. A successful send API response alone is not delivery evidence. No live message was sent, no session was re-paired, and nothing was pushed or deployed by this change.
+
+---
+
+## AgentX WhatsApp final: 2026-10-30
+
+**Who:** Codex, under repository-owner instructions.
+
+**Changed:** Preserved release `95b99fccaf6cee2e14471da7b9d0b289605075ae` on the existing feature branch. Unified development and signed persistent WhatsApp activation policy: exact normalized YOJANA/yojna/योजना only, localized plain-text Chat/Call list, numeric facts never menu commands, direct citizen messages only. Added trusted-origin authenticated bounded voice-note retrieval, in-memory ffmpeg OGG/Opus conversion and existing Sarvam STT integration. Media I/O releases the case transaction so STOP can revoke; version recheck prevents late audio restoring the case. Durable outbox dedup prevents repeated turns on retry. Added channel-language migration 004 and same-case language continuity into browser Call. Existing eligibility, browser interruption, privacy/security and case-storage code retained unchanged.
+
+**Documentation:** Replaced obsolete README with judge-facing features, workflow/architecture Mermaid diagrams, real local interface screenshots, setup/security details and honest evidence table. Added `docs/WHATSAPP_FINAL.md` with exact variables, engine-schema limitations, acceptance checklist and 90-second script. Public URLs, demo video and redacted live WhatsApp screenshot were not supplied; none fabricated.
+
+**Validation:** 360 passed, 0 failed, 1 real-PostgreSQL test skipped. Local real OGG/Opus decode and malformed/oversized/overlong rejection passed. Provider responses and WhatsApp sends mocked. Full frontend build, 19-asset synchronization, JavaScript syntax and pip checks passed. Real local HTTP/readiness/SSE, desktop/tablet/mobile and EN/HI/MR typed browser flows passed; microphone/audio events simulated. Interruption, stale STT/TTS, completion, restored dashboard and consent revocation browser checks passed. Release-file scan found only reviewed fake test/CI credentials. No databases, QR images, private links or secrets included.
+
+**Limitations:** No deployed origins, pinned running WAHA image/engine or live credentials available. Actual WAHA schema/QR session, Groq/Sarvam account calls, real PostgreSQL, container build and physical phone/recipient delivery remain UNVERIFIED. System TEMP drive was full; tests use ignored D-drive temp. An attempted removal of two disposable C-drive pytest caches was denied by Windows permissions; no project or recovery files removed. No push/deploy/main change.
+
+**Next:** Review the local release commit, privately configure the existing EasyPanel services, inspect the actual WAHA engine/schema and execute the external acceptance checklist. Keep backend/frontend on the same exact reviewed commit.
+
+---
+
+## AgentX candidate: 2026-10-30: reliable tap interruption and verified local demo
+**Who:** Codex with repository-owner instructions
+**Goal:** Finish the smallest reliable demo while preserving all uncommitted V2.5 hotfix work.
+
+**Changed**
+- Preserved source-audited cohort, eligibility, completion, relevance, citizen-isolation and snapshot safety changes. Recovery binary patches plus untracked source copies were saved outside the repository before implementation.
+- Added explicit Interrupt / Speak Now: synchronous cancellation of server audio/device synthesis, pending TTS abort, generation invalidation and immediate gesture-based listening. Capture epochs, duplicate-final guards and aborted STT prevent stale/duplicate turns. This is tap interruption, not acoustic hands-free barge-in.
+- Added visible Completed state, in-flight WhatsApp summary consent revocation and literal 1 Chat / 2 Call menu support. Recipient-bound queues and API-acceptance-only delivery wording are retained.
+- Added English/Hindi/Marathi synthetic multi-turn fixtures, relevant localized questions and brief fixed concluding speech. All 23 language entries remain; live coverage is unverified.
+- Synchronized all 19 public frontend assets, bumped frontend metadata to 2.5.1, added focused backend/browser regressions and AgentX acceptance/setup/judge documentation. No new database migration or paid service was introduced.
+
+**Tests:** 312 passed, 1 real-PostgreSQL test skipped, 0 failed; pip check, JavaScript checks, frontend build/sync and diff checks passed. Existing cohort/speech/citizen suites and the new interruption/consent suite passed. Actual local HTTP/readiness/SSE and automatic finalization/dashboard reload passed against mock extraction and an isolated SQLite adapter. All three migrations ran twice on that adapter. Five viewport sizes and English/Hindi/Marathi fixtures passed.
+
+**Decisions / limitations**
+- An initial follow-up test run encountered a full Windows system-temp drive; using an ignored project-drive temp directory resolved it. The successful full run uses that location.
+- No real provider/database credentials, deployment URLs, Docker/PostgreSQL service or WAHA QR session were available. Real PostgreSQL, Groq/Sarvam, physical mobile audio, deployed proxies and actual recipient receipt remain UNVERIFIED. Mocked tests never establish live success.
+- Create one local feature-branch release commit after verification. Do not push, deploy, modify main, force-push, reset or merge unrelated branches. Intended backend/frontend source is the same release SHA on feature/v2.5-citizen-experience; live control-panel branch settings cannot be confirmed here.
+
+**Next:** Owner review of docs/AGENTX_DEMO.md, private EasyPanel configuration/QR pairing, real PostgreSQL and provider/mobile smoke checks, then explicit publication/deployment approval.
+
+## v2.5: 2026-10-30: automatic assessment and resilient voice
+**Who:** Codex
+**Goal:** Complete useful assessments without catalog exhaustion and restore authorized results reliably.
+
+**Changed**
+- Added deterministic intent/geography coverage, uncertainty and question-budget policy shared by existing conversation channels.
+- Persisted automatic voice completion atomically, added short speech and stale playback cancellation, and bounded Sarvam quota/error fallback.
+- Added authorized dashboard match/history restoration and refresh/refinement controls; synchronized standalone frontend.
+- Added completion, authorization, speech failure and browser restoration regression coverage and updated deployment runbook.
+
+**Tests:** 295 passed, 1 skipped; frontend build and JavaScript syntax checks passed. Completion browser suite, citizen responsive workflows at five widths, English/Hindi/Marathi workflows and route/SSE smoke checks passed against local mocked inference and simulated audio. Python syntax/secret review found only existing CI references and synthetic test candidates; catalog matches HEAD, index empty.
+
+**Known issues / not done**
+- Real PostgreSQL persistence test skipped without an external test server. Hosted Groq/Sarvam, physical microphone/device audio and production proxy behavior require staging verification. No commit, push or deployment performed; no new migration or required environment variable.
+
+## v2.5: 2026-10-30: critical cohort, identity and audio hotfix
+**Who:** Codex
+**Goal:** Prevent school-only matches and incomplete rule data from falsely confirming eligibility; prevent mixed citizen facts and silent speech failure.
+
+**Changed**
+- Audited actual school nutrition/Navodaya catalog rows and official district pages. Added non-mutating source-backed class/enrollment/management overlays; preserved the public catalog and source URLs.
+- Unreviewed extraction cannot produce plain eligible. Manual matches cannot count as confirmed completion. Student course/year and useful income questions, pension relevance and program deduplication are explicit.
+- Fresh start creates a separate case; continuing is explicit. Identity corrections invalidate stale life-stage facts/results. Dependents use separate bounded profiles. Old persisted snapshots and retry caches cannot restore unsafe eligibility claims.
+- Audio decode errors use direct device fallback. Added Replay, autoplay/stall/timeout/error handling, final speech after ending, stale callback guards, fresh-summary clearing, and silent/empty WAV rejection.
+- Added actual-catalog, identity, legacy-snapshot and audio regressions, expanded local browser acceptance, and documented before/after outcomes in docs/HOTFIX_V25_AUDIT.md.
+
+**Tests:** 306 passed, 1 skipped; frontend build, synchronization, JavaScript syntax and diff checks passed. Local mocked browser checks cover actual college/senior cases, explicit continuation/fresh start, responsive English/Hindi/Marathi flows, automatic finalization/restoration, SSE and simulated speech failures/replay. No real inference or paid speech was called.
+
+**Known issues / not done**
+- Real PostgreSQL, provider connectivity/credits, physical mobile audio and production proxy require staging verification. Broader human audit of extracted catalog rules remains necessary. No migration/new environment variable, commit, push or deployment.
 
 ## Entry template
 
@@ -41,6 +122,58 @@ This file is the project's history, newest entry first. Read it top to bottom to
 
 **Next:** the next concrete step
 ```
+
+---
+
+## v2.5: 2026-10-30: Citizen experience, relevant questions and browser voice
+**Who:** Codex with repository owner authorization
+**Goal:** Implement V2.5 on feature/v2.5-citizen-experience without touching production, merging, pushing or calling paid services.
+
+**Changed**
+- core/relevance.py, core/questions.py, saathi/shortlist.py and web/conversation_api.py: explicit category/life-stage/occupation priority dominates unresolved-scheme count. Retired seniors seeking financial help explore pensions/income support, not scholarships. Geography and official eligibility stay deterministic and unchanged; no student flag or benefit is inferred.
+- web/frontend.py and public citizen assets: explicit government-scheme hero, four prominent citizen actions, source/evidence/missing-requirement cards, manual language options and saved voice history. Existing layouts, API contracts and owner/session restoration remain. Standalone frontend sync/build includes /voice.
+- web/voice.py, web/speech.py and browser voice assets: explicit microphone controls, recognition/transcription/thinking/playback states, typed fallback, bounded optional server STT, server-only Sarvam TTS and retained minimized transcript/ranked summaries. Real HTTP adapters are implemented but live speech quality is unverified.
+- Migrations 002_voice.sql and 003_channel_choices.sql add one-use link hashes, browser grants, encrypted channel routes, voice history/snapshots, summary outbox and persistent Chat/Call menu state. Numeric chat answers no longer accidentally select Call.
+- Secure WAHA START -> Chat/Call, same-case HTTPS fragment handoff, explicit atomic redemption, replay/expiry/STOP denial and encrypted retry payloads. Consent-based summary worker supports pending/retrying/failed/cancelled/accepted_by_waha, manual retries and cancellation; recipient delivery remains explicitly unverified.
+- 23-language BCP-47 registry with separate text/browser STT/provider speech coverage, automatic/mixed-language extraction, manual override and English fallback. Added ten-language fixtures without claiming real model or translation validation.
+- Deployment docs/runtime templates updated; docs/V25_CITIZEN_EXPERIENCE.md contains exact local/mock and staging instructions. Added scripts/check_citizen_browser.py; the old V2.3 browser script has fixed historical hero assertions and was write-protected, so its source was preserved.
+
+**Tests:** Full suite 283 passed, 1 skipped, 0 failed; targeted V2.5 suite 26 passed. Existing baseline preserved apart from updating the migration count for the two additive migrations. Dependency, frontend sync/build, JavaScript syntax and whitespace checks pass. Five-width browser checks passed through the standalone frontend/local proxy, covering citizen actions/translations, Explorer, real Rescue, voice layout, mocked en/hi/mr typed voice/restoration/mute/summary and simulated permission failure. HTTP API/routes/cache and incremental SSE/resumption smoke passed. Mobile screenshots visually inspected.
+**Eval:** No new real hosted-inference, recognition, speech synthesis, WhatsApp receipt or eligibility-quality claim. Public scheme catalog unchanged.
+
+**Known issues / not done**
+- Docker/PostgreSQL server binaries remain unavailable here; real PostgreSQL test is explicitly skipped. Production migrations/service restart and Vercel edge behavior still need staging checks.
+- Sarvam/Groq/Qwen credentials were not supplied or used for live calls. Actual microphone/browser-provider quality, ten-priority-language speech quality and WAHA pairing/delivery remain manual validation requirements.
+- Third-party send acknowledgement and database commit are not atomic; ambiguous failures can duplicate a WhatsApp response. The UI never equates WAHA acceptance with verified recipient delivery.
+- The existing untracked frontend/.gitignore was present before this work and was left untouched. No staging, commit, push, merge or deployment was performed.
+
+**Next:** Review the branch; follow the V2.5 runbook for Docker/PostgreSQL, genuine hosted inference, mobile microphone, Sarvam and opted-in WhatsApp staging checks before considering publication/deployment.
+
+---
+
+## v2.4: 2026-10-29: Deployment infrastructure and persistent case memory
+**Who:** Codex with repository owner authorization
+**Goal:** Prepare the existing website for Vercel, Docker/EasyPanel, PostgreSQL and a separate WAHA service on the existing 6 GB VM; do not push or deploy.
+
+**Changed**
+- Standalone `frontend/` retains all public/dashboard/legacy assets. Its dependency-free Node build emits Vercel Build Output API HTTPS rewrites; API calls and native SSE stay on the frontend origin. Added asset drift checks and local proxy simulation.
+- Added pinned-Python non-root Docker runtime, writable public catalog scratch copy, one worker, bounded concurrency, health/readiness, staging Compose and separate official-image WAHA Compose template with a pairing volume and protected API/dashboard.
+- Added PostgreSQL case migrations/repository (SQLite adapter for offline validation), owner authorization via HttpOnly cookie or Bearer capability, validated facts, bounded minimized messages, pending questions, case status, guidance-review approvals, absolute retention, deletion and cleanup. Restores main and legacy sessions; interrupted legacy discovery is reported rather than replayed.
+- Added signed SHA-512 WAHA endpoint, hashed opt-in mappings, durable event/outbox deduplication and retry reuse; STOP clears the local case and cancels queued earlier replies. Production disables the old URL-secret webhook. Ambiguous external-send failures remain at-least-once, not exactly-once.
+- Hosted OpenAI-compatible inference keeps Groq/Qwen support, bounded SDK timeout, safe provider status/error classes, contextual extraction and metadata-only error logging. Production rejects local/mock providers. No genuine inference request was attempted.
+- Added deployment tests, mocked multilingual browser checks, Docker/PostgreSQL restart smoke tooling, exact EasyPanel/Vercel/WAHA/rollback instructions in DEPLOYMENT.md and origin/storage audit in docs/DEPLOYMENT_AUDIT_V24.md.
+
+**Tests:** Full suite 257 passed, 1 skipped, 0 failed; original 237-test baseline preserved. `pip check`, frontend synchronization/build, JavaScript syntax and whitespace checks pass. All five-width responsive browser checks pass through the built frontend/local reverse-proxy simulator, including English/Hindi/Marathi landing, navigation, chat retry/reset, Rescue, channels, legacy/docs. Separate en/hi/mr mocked browser checks pass for conversation, cookie authorization, saved-case reload and deletion. HTTP routes, API cache controls and incremental SSE/resume passed through the local proxy.
+**Eval:** No new real-world model-quality claim. Public scheme catalog unchanged.
+
+**Known issues / not done**
+- Docker build was attempted but Docker CLI/daemon is unavailable. No PostgreSQL server is installed; its dedicated test is explicitly skipped. Image execution, actual PostgreSQL migrations/service-restart persistence and resource consumption remain owner-run validation steps; SQLite tests are not a substitute.
+- Live Vercel rewrites, EasyPanel deployment, hosted-model requests and actual WAHA pairing/delivery are unverified. No URLs or external successes are fabricated.
+- Local filesystem permissions prevented writing `.github/workflows/deployment.yml`; the complete optional CI workflow is supplied as `deploy/github-actions-deployment.yml` for owner activation. Existing workflow is untouched.
+- Existing SECURITY.md was also write-protected; the V2.4 deployment audit explicitly supersedes its old in-memory-only notes. README links the current deployment guidance.
+- No staging, commit, GitHub push, cloud deployment, real outbound message or paid inference request was performed.
+
+**Next:** Review the feature branch and run the supplied Docker/PostgreSQL smoke on a Docker host. Then publish/deploy deliberately following DEPLOYMENT.md, configure exact runtime URLs/secrets and perform live synthetic checks before public traffic.
 
 ---
 

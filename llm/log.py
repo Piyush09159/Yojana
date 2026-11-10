@@ -17,6 +17,9 @@ DEFAULT_PATH = Path(__file__).resolve().parent.parent / "logs" / "llm_calls.json
 def log_call(**record) -> None:
     if os.getenv("LLM_LOG", "1") == "0":
         return
+    if record.get('error'):
+        # SDK/validation exceptions can echo prompts, account IDs or credentials.
+        record['error'] = 'provider_or_validation_error'
     path = Path(os.getenv("LLM_LOG_PATH") or DEFAULT_PATH)
     record = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **record}
     try:
