@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .conversation_api import Message, conversation
-from . import case_store
+from . import case_store, notifications
 from .privacy import redact
 from .channel_security import seal, unseal
 
@@ -47,7 +47,7 @@ def welcome(lang):
     options = {'en':'• *Chat* — Send text or WhatsApp voice notes (up to 15 seconds).\n• *Call* — Open a secure browser voice conversation.\n\nReply *Chat* or *Call*.',
                'hi':'• *चैट* — संदेश या WhatsApp वॉइस नोट भेजें (15 सेकंड तक)।\n• *कॉल* — सुरक्षित ब्राउज़र में बात करें।\n\n*Chat* / *चैट* या *Call* / *कॉल* लिखें।',
                'mr':'• *चॅट* — संदेश किंवा WhatsApp व्हॉइस नोट पाठवा (15 सेकंदांपर्यंत).\n• *कॉल* — सुरक्षित ब्राउझरमध्ये बोला.\n\n*Chat* / *चॅट* किंवा *Call* / *कॉल* लिहा.'}[lang]
-    return lead+'\n\n'+options+'\nSTOP: unsubscribe. Never send Aadhaar, bank or identity numbers. Independent guidance; not a government service.'
+    return lead+'\n\n'+options+notifications.option_notice(lang)+'\nSTOP: unsubscribe. Never send Aadhaar, bank or identity numbers. Independent guidance; not a government service.'
 
 def voice_failure(lang):
     return {'en':"I couldn't transcribe that voice note. Please retry with up to 15 seconds or type instead. Do not share identity or bank numbers.",
@@ -117,7 +117,7 @@ async def signed_webhook(request: Request):
     raw = bytearray()
     async for chunk in request.stream():
         raw.extend(chunk)
-        if len(raw) > 32768:
+        if len(raw) > 131072:
             raise HTTPException(413, 'Webhook too large')
     signature = request.headers.get('x-webhook-hmac', '')
     if request.headers.get('x-webhook-hmac-algorithm', '').lower() != 'sha512' or not hmac.compare_digest(
@@ -195,6 +195,7 @@ def persistent_event(body):
                     if mapping['session_id']:
                         tx.lock(mapping['session_id'])
                         tx.execute('DELETE FROM case_sessions WHERE id=?', (mapping['session_id'],))
+                    notifications.remove(tx, chat_hash)
                     tx.execute('DELETE FROM waha_chats WHERE chat_hash=?', (chat_hash,))
                     tx.execute("UPDATE waha_events SET status='sent',reply=NULL,result='cancelled' WHERE chat_hash=?", (chat_hash,))
                     reply = 'Yojana-Pilot stopped. The local case was cleared. Send YOJANA to opt in again. WAHA/provider logs have separate retention policies.'
@@ -209,6 +210,15 @@ def persistent_event(body):
                 status = 'not_opted_in'
             elif media_error:
                 status, reply = 'transcription_failed', voice_failure(lang)
+            elif command in notifications.UPDATES_ON | notifications.UPDATES_OFF | notifications.UPDATES_STATUS:
+                status, reply = notifications.handle_command(tx, chat_hash, chat, lang, command)
+                if status == 'alerts_on' and mapping and mapping['session_id']:
+                    try:
+                        existing = tx.session(mapping['session_id'], trusted=True)
+                        notifications.update_profile(tx, chat_hash, chat, existing['state'].get('profile', {}), lang)
+                    except HTTPException as exc:
+                        if exc.status_code != 404:
+                            raise
             elif command in LANGUAGE:
                 lang = LANGUAGE[command]
                 tx.execute('INSERT INTO channel_languages VALUES(?,?) ON CONFLICT(chat_hash) DO UPDATE SET language=excluded.language',(chat_hash,lang))
@@ -253,7 +263,7 @@ def persistent_event(body):
                         sid = None
                 if any('\u0900' <= c <= '\u097f' for c in text):
                     lang = 'mr' if any(w in text for w in ('मी ', 'आहे', 'माझ', 'मला', 'वर्षांचा')) else ('hi' if lang != 'mr' else lang)
-                elif re.search(r'\b(I am|my|need|help|years old)\b',text,re.I):
+                elif lang == 'en' and re.search(r'\b(I am|my|need|help|years old)\b',text,re.I):
                     lang = 'en'
                 try:
                     other_script = any(c.isalpha() and ord(c)>127 and not '\u0900'<=c<='\u097f' for c in text)
@@ -268,11 +278,13 @@ def persistent_event(body):
                                (result['session_id'], time.time(), chat_hash))
                     status, reply = 'replied', redact(result['message'])
                     lang = result.get('language', lang)
+                    notifications.update_profile(tx, chat_hash, chat, result.get('profile', {}), lang)
                     if lang not in ('en','hi','mr'):
                         reply = 'This language is registered but not verified for this demo. Please use English, Hindi or Marathi.\n'+reply
             if mapping or status == 'started':
                 if status != 'stopped':
                     tx.execute('INSERT INTO channel_languages VALUES(?,?) ON CONFLICT(chat_hash) DO UPDATE SET language=excluded.language',(chat_hash,lang))
+                    tx.execute('UPDATE scheme_alert_recipients SET language=?,updated_at=? WHERE chat_hash=?', (lang,time.time(),chat_hash))
             now = time.time()
             tx.execute('INSERT INTO waha_events VALUES(?,?,?,?,?,?,?)',
                        (event_id, chat_hash, 'pending' if reply else 'sent', status,

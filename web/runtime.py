@@ -83,7 +83,7 @@ def install(app):
     async def boundaries(request, call_next):
         path = request.url.path
         if path.startswith('/api/'):
-            max_body = 750000 if path == '/api/voice/stt' else 32768
+            max_body = 750000 if path == '/api/voice/stt' else 131072 if path == '/api/webhooks/waha' else 32768
             length = request.headers.get('content-length', '0')
             try:
                 if int(length) > max_body:
