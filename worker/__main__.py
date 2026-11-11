@@ -14,11 +14,29 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import signal
 import sys
 
 from store import db, runtime
 
-from .loop import run
+from .loop import STOP, run
+
+
+def _stop(signum, frame) -> None:
+    # EasyPanel/Docker stop sends SIGTERM: finish the job in hand, then exit. A job cut off by a
+    # SIGKILL is not lost: its lease runs out and the next worker takes it again.
+    STOP.set()
+
+
+def production_problem() -> str | None:
+    """In production the worker must share the app's scheme database; a container-local SQLite
+    copy would silently process nothing the app queued."""
+    if os.getenv("DEPLOYMENT_MODE") != "production":
+        return None
+    if db.backend_name() != "postgres":
+        return "DEPLOYMENT_MODE=production requires SCHEME_DATABASE_URL (the same Neon database as yojana-api)"
+    return None
 
 
 def queue_batch(n: int) -> int:
@@ -52,6 +70,11 @@ def main() -> int:
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--retry-failed", action="store_true", help="send failed jobs back to the queue first")
     args = ap.parse_args()
+    problem = production_problem()
+    if problem:
+        print(f"Worker not started: {problem}", file=sys.stderr)
+        return 2
+    signal.signal(signal.SIGTERM, _stop)
     if args.status:
         status()
         return 0

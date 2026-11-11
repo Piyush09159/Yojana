@@ -82,13 +82,15 @@ def main(argv: list[str] | None = None) -> int:
     elif cmd == "verify" and len(argv) > 1:
         ok = db.set_verified(argv[1], True)
         print(f"{argv[1]}: {'marked verified' if ok else 'not found'}")
-    elif cmd in ("pg-init", "pg-import", "quality"):
+    elif cmd in ("pg-init", "pg-import", "quality", "pg-status"):
         if db.backend_name() != "postgres":
             print("Set SCHEME_DATABASE_URL in .env first (postgresql://user:password@localhost:5432/yojana).")
             return 2
         from . import pg_admin
         print(f"Database: {db.db_path()}")
-        if cmd == "pg-init":
+        if cmd == "pg-status":
+            pg_admin.migration_status()
+        elif cmd == "pg-init":
             pg_admin.init_schema()
         elif cmd == "pg-import":
             pg_admin.import_from_sqlite(argv[1] if len(argv) > 1 else None)

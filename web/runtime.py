@@ -17,6 +17,9 @@ def validate_configuration():
         return
     if not os.getenv('DATABASE_URL', '').startswith(('postgresql://', 'postgres://')):
         raise RuntimeError('Production requires a PostgreSQL DATABASE_URL')
+    scheme_url = os.getenv('SCHEME_DATABASE_URL', '').strip()
+    if scheme_url and not scheme_url.startswith(('postgresql://', 'postgres://')):
+        raise RuntimeError('SCHEME_DATABASE_URL must be a postgresql:// URL (or unset for the bundled SQLite catalog)')
     if not case_store.auth_required():
         raise RuntimeError('Production requires SESSION_AUTH_REQUIRED=true')
     origins = [v.strip() for v in os.getenv('APP_ORIGINS', '').split(',') if v.strip()]
@@ -37,6 +40,11 @@ def validate_configuration():
 @asynccontextmanager
 async def lifespan(app):
     validate_configuration()
+    try:
+        from .waha_bridge import report_voice_config
+        report_voice_config()
+    except Exception:
+        pass                                    # a diagnostic must never block startup
     if case_store.enabled():
         await asyncio.to_thread(case_store.migrate)
         await asyncio.to_thread(case_store.purge)
@@ -131,8 +139,9 @@ def install(app):
     @app.get('/api/health/ready')
     def ready():
         try:
-            from discovery.catalog import load_catalog
-            catalog_ok = bool(load_catalog())
+            # Cached on Postgres so a 30 s probe does not pull the whole catalog from Neon each time.
+            from discovery.catalog import cached_catalog
+            catalog_ok = bool(cached_catalog())
             database_ok = case_store.ready() if case_store.enabled() else not production()
             ok = catalog_ok and database_ok
         except Exception:

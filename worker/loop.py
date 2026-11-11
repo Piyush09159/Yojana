@@ -8,7 +8,10 @@ A crashing handler never stops the loop.
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import time
+from pathlib import Path
 
 from store import runtime
 
@@ -16,6 +19,21 @@ from .jobs import HANDLERS, RetryLater
 
 log = logging.getLogger("worker")
 LEASE = 600                     # seconds a job may run before another worker may take it over
+STOP = threading.Event()        # set by SIGTERM/SIGINT: finish the current job, then exit
+
+
+def heartbeat_path() -> Path:
+    return Path(os.getenv("WORKER_HEARTBEAT", str(Path(os.getenv("HOME") or ".") / "worker.heartbeat")))
+
+
+def beat() -> None:
+    """Touch the heartbeat file the container health check reads (deploy/healthcheck.py)."""
+    try:
+        path = heartbeat_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(time.time()), encoding="ascii")
+    except OSError:
+        pass
 
 
 def run_one(kinds: list[str] | None = None, handlers: dict | None = None) -> dict | None:
@@ -43,13 +61,15 @@ def run_one(kinds: list[str] | None = None, handlers: dict | None = None) -> dic
 def run(kinds: list[str] | None = None, once: bool = False, idle: float = 5.0, out=print) -> int:
     """Process jobs. once=True: until none is ready, then return how many ran."""
     done = 0
-    while True:
+    while not STOP.is_set():
+        beat()
         r = run_one(kinds)
         if r is None:
             if once:
                 return done
-            time.sleep(idle)
+            STOP.wait(idle)
             continue
         done += 1
         detail = r.get("result") if r["status"] == "done" else r.get("error")
         out(f"  job {r['id']:>4} {r['kind']:8} {r['status']:7} {r['s']:5.1f}s  {detail}")
+    return done

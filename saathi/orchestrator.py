@@ -1,6 +1,8 @@
-"""The conversation orchestrator: one deterministic state machine per conversation, shared by every
-entry point (WhatsApp, the /app API, the terminal). Code runs the flow; agents are called only for
-the narrow jobs code cannot do, through agents.runner.run_agent, which never raises.
+"""The conversation orchestrator: one deterministic state machine per conversation, used by the
+terminal (python -m saathi) and the worker's notify lane. NOTE (audit 2026-11-11): WhatsApp and the
+/app API do NOT run through this class yet; they use web/conversation_api.py, which shares its
+building blocks (shared Reader client, short_answer, gap queue). See docs/PRODUCTION_READINESS_AUDIT.md.
+Code runs the flow; agents are called only for the narrow jobs code cannot do, through agents.runner.run_agent, which never raises.
 
 One turn:
     guard        Aadhaar / bank / phone numbers are refused before anything else

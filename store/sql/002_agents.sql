@@ -5,6 +5,21 @@
 -- tables are Unix seconds (DOUBLE PRECISION), the same as the SQLite store, so both backends share
 -- one implementation in store/runtime.py.
 
+-- Safety: the drops below are only for the empty 001 placeholders. If any of them holds rows
+-- (someone used them, or this file is being re-applied by hand), stop and change nothing.
+DO $$
+DECLARE t TEXT; has_rows BOOLEAN;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['job', 'conversation', 'segment_search'] LOOP
+        IF to_regclass(t) IS NOT NULL THEN
+            EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I)', t) INTO has_rows;
+            IF has_rows THEN
+                RAISE EXCEPTION '002_agents.sql refuses to drop non-empty table %; back it up and migrate it by hand', t;
+            END IF;
+        END IF;
+    END LOOP;
+END $$;
+
 DROP TABLE IF EXISTS job;
 DROP TABLE IF EXISTS conversation;
 DROP TABLE IF EXISTS segment_search;

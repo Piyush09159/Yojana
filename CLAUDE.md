@@ -331,6 +331,7 @@ python -m ingest --map-urls mh         # 2. find every scheme page and queue it 
 python -m ingest --extract-queued --limit 200       # 3. read queued pages with the LLM (resumable)
 python -m store migrate | export | stats | verify <id>   # database: import, dump, counts, mark checked
 python -m store pg-init | pg-import | quality            # PostgreSQL (SCHEME_DATABASE_URL): schema, copy, report
+python -m store pg-status                                # read-only: pending migrations + row counts (run before pg-init)
 python scripts/check_pg_parity.py                        # Postgres answers == SQLite answers
 python scripts/try_flow.py [--web N] [--update N] "<msg>" # live: one message through every step
 python -m saathi [--worker] [--debug]                   # live: chat through the orchestrator

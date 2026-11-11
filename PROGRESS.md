@@ -12,11 +12,25 @@ This file is the project's history, newest entry first. Read it top to bottom to
 |---|---|
 | Version | v2.8 integration: refactor (v2.4 deployment, v2.5 citizen experience, WhatsApp, voice, Redis cache, scheme alerts) + scheme database + agent orchestration |
 | Last updated | 2026-11-11 |
-| Tests | 480 passed, 12 skipped offline (no network); 30/30 Postgres tests (scheme store + real-PostgreSQL case store) pass on Neon `yojana_test` |
+| Tests | 521 passed, 13 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL (not run in the 2026-11-11 audit) |
 | Phase | refactor demo plus PostgreSQL scheme catalog (SCHEME_DATABASE_URL), five agents, background job lanes |
 | Schemes | 267 public scheme records in data/schemes.db; 270 in the Neon catalog; 523 pages queued |
 | Eval | eligibility 36/36, start-with 12/12, name matcher P=R=1.00 (small sets); Reader agent 52/53 (98%); Verifier 5/5 caught, 0/3 wrongly dropped |
-| Next task | Route the refactor conversation's extraction through the Reader agent's runner end to end; owner review of refactor2.0 |
+| Next task | Review/merge fix/neon-worker-voice; run docs/EASYPANEL_NEON_DEPLOYMENT.md (pg-status first), deploy yojana-worker, live voice-note round trip |
+
+---
+
+## Production readiness audit + WhatsApp voice-note fix: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `fix/neon-worker-voice` from `refactor` @ `9f77874`. Not committed, pushed or deployed.
+
+**Root cause, voice notes get no reply:** (1) WAHA NOWEB 2026.10.1 sends `body: null` for voice notes and `persistent_event` returned `ignored` (HTTP 200, no reply, no retry). (2) WAHA's media URL is `/api/files/<session>/<id>.oga`, which the media allowlist rejected. Both were verified against WAHA 2026.10.1 source, and both are fixed. A test fails on the old code.
+
+**Changes:** web/waha_bridge.py (null body for media; reason-specific en/hi/mr failure replies; a transcript is reused across WAHA retries so Sarvam is paid once; voice readiness check), web/waha_media.py (session-nested paths, optional WAHA_MEDIA_ORIGINS while still fetching only from WAHA_BASE_URL, inline base64, VoiceFailure codes), web/diagnostics.py (new, privacy-safe JSON codes), Dockerfile (+agents, +worker, build smoke test, dual-role health check), deploy/healthcheck.py and deploy/smoke_imports.py (new), worker (SIGTERM graceful stop, heartbeat, refuses SQLite in production), saathi/senders.py (WORKER_OUTBOUND_ENABLED gate), store/sql/002_agents.sql (refuses to drop non-empty tables), `python -m store pg-status` (read-only), discovery/catalog.cached_catalog (Postgres catalog kept 60 s in memory for conversation and /readyz), production check on SCHEME_DATABASE_URL, orchestrator docstring corrected (web/WhatsApp do not use it yet). Docs: PRODUCTION_READINESS_AUDIT.md, EASYPANEL_NEON_DEPLOYMENT.md, WHATSAPP_VOICE_DEBUG.md.
+
+**Tests:** `python -m pytest -q` = **521 passed, 13 skipped** (baseline 479/13), three runs. One earlier run timed out once while its output was piped through `tail`; not reproduced. New: tests/test_voice_pipeline.py (31), tests/test_deploy_worker.py (11).
+
+**Not verified (no access/tools here):** docker build, real ffmpeg, Postgres/Neon, Valkey, WAHA, Sarvam, EasyPanel, Vercel build. See the audit's final status table.
 
 ---
 
