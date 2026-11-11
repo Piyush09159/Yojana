@@ -1,4 +1,11 @@
-"""Server-only Sarvam REST integration. No audio or provider payload is logged/stored."""
+"""Server-only speech integrations. No audio, transcript or provider payload is logged/stored.
+
+STT providers (STT_PROVIDER):
+  local   self-hosted stt_service on the private network (LOCAL_STT_URL); never falls back to Sarvam
+  sarvam  Sarvam REST (opt-in; also selected when STT_PROVIDER is unset and SARVAM_STT_ENABLED=true)
+  off     voice input disabled (default)
+TTS stays on Sarvam and is unaffected.
+"""
 import base64
 import io
 import os
@@ -88,8 +95,64 @@ def tts(text, language):
         raise HTTPException(502, {'code': 'invalid_speech_response'})
 
 
+def stt_provider():
+    """'local', 'sarvam' or 'off'. Unknown values mean 'off' so audio is never sent somewhere unintended."""
+    chosen = os.getenv('STT_PROVIDER', '').strip().lower()
+    if chosen:
+        return chosen if chosen in ('local', 'sarvam', 'off') else 'off'
+    return 'sarvam' if os.getenv('SARVAM_STT_ENABLED', 'false').lower() == 'true' else 'off'
+
+
+def stt_configured():
+    provider = stt_provider()
+    if provider == 'local':
+        return bool(os.getenv('LOCAL_STT_URL'))
+    return provider == 'sarvam' and bool(os.getenv('SARVAM_API_KEY'))
+
+
+def _local_stt(raw, language):
+    """POST the validated WAV to the private STT service. Errors map to the same codes as Sarvam's."""
+    started = time.perf_counter(); outcome = 'error'
+    url = os.getenv('LOCAL_STT_URL', '').rstrip('/')
+    if not url.startswith(('http://', 'https://')):
+        record('stt', 0, 'fallback')
+        raise HTTPException(503, {'code': 'speech_not_configured'})
+    headers = {'Content-Type': 'audio/wav'}
+    if os.getenv('LOCAL_STT_TOKEN'):
+        headers['Authorization'] = 'Bearer ' + os.environ['LOCAL_STT_TOKEN']
+    hint = normalize(language)
+    params = {'language': hint} if hint in ('en', 'hi', 'mr') else {}
+    timeout = float(os.getenv('LOCAL_STT_TIMEOUT_SECONDS', '30'))
+    try:
+        with httpx.Client(timeout=httpx.Timeout(timeout, connect=3), follow_redirects=False,
+                          trust_env=False) as client:
+            response = client.post(url + '/transcribe', content=raw, headers=headers, params=params)
+        try:
+            data = response.json() if len(response.content) <= 200000 else {}
+        except ValueError:
+            data = {}
+        code = data.get('code') if isinstance(data, dict) else None
+        if response.status_code == 200 and isinstance(data, dict):
+            outcome = 'ok'
+            return data
+        if response.status_code == 503 and code == 'busy':
+            raise HTTPException(503, {'code': 'speech_busy', 'fallback': 'type'})
+        if response.status_code in (413, 422):
+            raise HTTPException(422, {'code': 'speech_unsupported_request', 'fallback': 'type'})
+        if response.status_code == 401:
+            raise HTTPException(503, {'code': 'speech_auth_unavailable', 'fallback': 'type'})
+        raise HTTPException(503, {'code': 'speech_provider_unavailable', 'fallback': 'type'})
+    except httpx.TimeoutException:
+        raise HTTPException(504, {'code': 'speech_timeout', 'fallback': 'type'})
+    except httpx.HTTPError:
+        raise HTTPException(503, {'code': 'speech_provider_unavailable', 'fallback': 'type'})
+    finally:
+        record('stt', time.perf_counter() - started, outcome)
+
+
 def stt(encoded, language):
-    if os.getenv('SARVAM_STT_ENABLED', 'false').lower() != 'true':
+    provider = stt_provider()
+    if provider == 'off':
         record('stt',0,'fallback')
         raise HTTPException(503, {'code': 'stt_not_enabled', 'fallback': 'type'})
     try:
@@ -104,11 +167,19 @@ def stt(encoded, language):
                 raise ValueError()
     except (ValueError, wave.Error, EOFError):
         raise HTTPException(422, {'code': 'audio_requires_mono_16khz_pcm_wav_under_15_seconds'})
-    data = request('speech-to-text', files={'file': ('speech.wav', raw, 'audio/wav')},
-                   data={'model': os.getenv('SARVAM_STT_MODEL', 'saaras:v3'), 'mode': 'transcribe',
-                         'language_code': provider_code(language)})
-    text = data.get('transcript')
+    if provider == 'local':
+        data = _local_stt(raw, language)
+        text = data.get('text')
+        if data.get('no_speech') or (isinstance(text, str) and not text.strip()):
+            raise HTTPException(422, {'code': 'no_speech', 'fallback': 'type'})
+        detected = data.get('language')
+    else:
+        data = request('speech-to-text', files={'file': ('speech.wav', raw, 'audio/wav')},
+                       data={'model': os.getenv('SARVAM_STT_MODEL', 'saaras:v3'), 'mode': 'transcribe',
+                             'language_code': provider_code(language)})
+        text = data.get('transcript')
+        detected = data.get('language_code')
     if not isinstance(text, str) or not text.strip() or len(text) > 1800:
         raise HTTPException(502, {'code': 'invalid_transcript'})
     from .conversation_api import _safe_message
-    return {'text': _safe_message(text), 'language': normalize(data.get('language_code'))}
+    return {'text': _safe_message(text), 'language': normalize(detected)}

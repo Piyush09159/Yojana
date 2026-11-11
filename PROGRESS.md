@@ -12,11 +12,64 @@ This file is the project's history, newest entry first. Read it top to bottom to
 |---|---|
 | Version | v2.8 integration: refactor (v2.4 deployment, v2.5 citizen experience, WhatsApp, voice, Redis cache, scheme alerts) + scheme database + agent orchestration |
 | Last updated | 2026-11-11 |
-| Tests | 563 passed, 13 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL (not run in the 2026-11-11 audit) |
+| Tests | 611 passed, 14 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (6/6 passed locally) |
 | Phase | refactor demo plus PostgreSQL scheme catalog (SCHEME_DATABASE_URL), five agents, background job lanes |
 | Schemes | 267 public scheme records in data/schemes.db; 270 in the Neon catalog; 523 pages queued |
 | Eval | eligibility 36/36, start-with 12/12, name matcher P=R=1.00 (small sets); Reader agent 52/53 (98%); Verifier 5/5 caught, 0/3 wrongly dropped |
-| Next task | Review/merge fix/neon-worker-voice; run docs/EASYPANEL_NEON_DEPLOYMENT.md (pg-status first), deploy yojana-worker, live voice-note round trip |
+| Next task | Deploy yojana-stt (docs/LOCAL_STT.md), switch yojana-api to STT_PROVIDER=local, live hi/mr/en voice-note test; benchmark IndicConformer or a Marathi Whisper (Marathi CER 0.55 with whisper small) |
+
+---
+
+## Local offline speech-to-text (yojana-stt) replaces Sarvam STT: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `fix/neon-worker-voice`. Not committed, pushed or deployed.
+
+**Why:** production logs showed `SARVAM_STT_FAILED status=402 detail=speech_credits_exhausted`. The WAHA media path was working.
+
+**What:**
+* **New `stt_service/` microservice** (separate image `Dockerfile.stt`, `requirements-stt.txt`): faster-whisper `small`, CPU int8, beam 1, temperature 0, VAD.
+  * Endpoints: `POST /transcribe` (WAV bytes, ≤15 s, mono 16 kHz PCM16, body bound about 484 KB), `GET /health`, `GET /ready`.
+  * Load and safety: one model loaded once at startup; `STT_CONCURRENCY=1` with a bounded queue wait (503 busy); optional bearer token; no disk writes.
+  * Logs: timings, duration and language only.
+  * Weights: pinned revisions are baked in at build time (`download_model.py`), and the container runs offline.
+* **Engines:**
+  * `choose_language`: limited to en/hi/mr; the chat language breaks hi/mr confusion; Urdu maps to hi.
+  * `IndicConformerEngine`: adapter only, not enabled. Its weights are gated, it needs custom code and torch, and it has no English, so English goes to Whisper.
+* **`web/speech.py`:**
+  * `STT_PROVIDER` = local | sarvam | off. Unset keeps the legacy behaviour (Sarvam only if `SARVAM_STT_ENABLED=true`); unknown values mean off.
+  * `_local_stt()` posts the WAV bytes with timeout `LOCAL_STT_TIMEOUT_SECONDS` and no redirects or proxy env. It **never falls back to Sarvam**.
+  * New `no_speech` result.
+  * TTS is unchanged.
+* **`web/waha_media.py` / `web/waha_bridge.py`:**
+  * The chat's stored language is passed as a hint to the local engine only (Sarvam keeps auto-detection).
+  * New codes `LOCAL_STT_FAILED`, `VOICE_NO_SPEECH`, `STT_DISABLED`; `VOICE_TRANSCRIPT_READY source=local`.
+  * `voice_missing` is provider-aware.
+  * **In-flight guard:** a WAHA retry during the 8–15 s transcription gets 503 instead of a second transcription.
+* **`web/runtime.py`:** production rejects an unknown `STT_PROVIDER`, or `local` without a valid `LOCAL_STT_URL`.
+* **`web/voice.py`:** capabilities report `stt_provider`.
+* **Config and docs:** `.env.example`, docs/LOCAL_STT.md (new; deployment, rollback, benchmark), WHATSAPP_VOICE_DEBUG.md, EASYPANEL_NEON_DEPLOYMENT.md, CLAUDE.md commands, `.gitattributes` (`*.wav binary`).
+
+**Tests:**
+* tests/test_stt_service.py (25): HTTP contract with real FLEURS audio and a fake engine; invalid, silent and too-long audio; model unavailable; concurrency; token; log privacy; language choice.
+* tests/test_local_stt.py (23): request shape, timeout, failures without Sarvam, provider selection, production validation, readiness, WhatsApp en/hi/mr/mixed end to end, hint, silence, service down, in-flight retry.
+* tests/test_stt_real_audio.py (6, opt-in): real model; en/hi/mr CER bounds; Devanagari output; silence; **a real signed WhatsApp voice note transcribed by the real model and answered**.
+* Fixtures: 4 FLEURS clips (CC-BY-4.0, ATTRIBUTION.md).
+* Results: full suite 611 passed, 14 skipped. Real-model tests 6/6 passed in the STT venv.
+
+**Measured (this machine, 8 CPUs; not the server):**
+
+| | en CER | hi CER | mr CER | Time per note | Memory |
+|---|---|---|---|---|---|
+| small, 2 threads | 0.06 | 0.29 | 0.55 | 7–10 s | service 418 MB idle / 558 MB peak |
+| small, 4 threads | | | | 6.4–7.4 s | |
+| base | | 0.95 (Urdu or Latin script) | | | |
+
+So base is not usable, and **Marathi accuracy with Whisper small is poor**. Three concurrent notes finished at 9, 18 and 27.5 s.
+
+**Not done:**
+* No Docker build (no Docker here).
+* No EasyPanel deploy and no live WhatsApp note.
+* IndicConformer not benchmarked: it is gated and needs the owner's HF account.
 
 ---
 

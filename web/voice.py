@@ -72,7 +72,7 @@ def redeem(body: Redemption, request: Request, response: Response):
 @router.get('/capabilities')
 def capabilities():
     return {'languages': registry(), 'tts_configured': bool(os.getenv('SARVAM_API_KEY')),
-            'stt_configured': bool(os.getenv('SARVAM_API_KEY')) and os.getenv('SARVAM_STT_ENABLED') == 'true',
+            'stt_configured': speech.stt_configured(), 'stt_provider': speech.stt_provider(),
             'speech_live_verified': False, 'kind': 'browser_voice_not_phone_call'}
 
 

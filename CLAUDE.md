@@ -336,6 +336,8 @@ python scripts/check_pg_parity.py                        # Postgres answers == S
 python scripts/try_flow.py [--web N] [--update N] "<msg>" # live: one message through every step
 python -m saathi [--worker] [--debug]                   # live: chat through the orchestrator
 python -m worker [--once|--batch N|--status]            # live: background agent lanes
+python -m stt_service                                   # local speech-to-text service (requirements-stt.txt; docs/LOCAL_STT.md)
+python scripts/bench_stt.py --audio-dir D --model-dir M  # STT WER/CER, CPU latency, memory
 python -m agents.eval --live [--pace S] [reader|verifier] # live: score each agent on its gold set
 python scripts/bench_llm.py [provider:model ...]   # compare models (uses tokens)
 .\start.ps1 [-NoWeb|-Update|-Stats|-Test|-Debug]   # Windows launcher (start.bat = double-click)

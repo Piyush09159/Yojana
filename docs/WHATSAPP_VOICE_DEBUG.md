@@ -12,7 +12,7 @@
 | 6 | Media metadata | `waha_media.media_url` | `WAHA_MEDIA_UNAVAILABLE`, `WAHA_MEDIA_UNSUPPORTED`, `WAHA_MEDIA_UNTRUSTED` | "couldn't transcribe" |
 | 7 | Download from trusted WAHA origin (8 s, 2 MB, no redirects) | `waha_media.download` | `WAHA_MEDIA_DOWNLOAD_FAILED status=…`, `VOICE_TOO_LONG` | "couldn't transcribe" / "longer than 15 s" |
 | 8 | ffmpeg → 16 kHz mono PCM WAV, ≤15 s | `waha_media.decode` | `WAHA_AUDIO_DECODE_FAILED detail=ffmpeg not installed\|…`, `VOICE_TOO_LONG` | as above |
-| 9 | Sarvam STT (`saaras:v3`, `mode=transcribe`, `language_code=unknown`) | `speech.stt` | `SARVAM_STT_DISABLED`, `SARVAM_STT_FAILED status=401/402/429/504 detail=…`, `VOICE_BUSY`, `VOICE_SENSITIVE_NUMBER` | "voice not available, please type" / "without the number" |
+| 9 | STT: `STT_PROVIDER=local` → yojana-stt (see [LOCAL_STT.md](LOCAL_STT.md)); `sarvam` → Sarvam `saaras:v3` | `speech.stt` | `STT_DISABLED`, `LOCAL_STT_FAILED status=503/504 detail=speech_provider_unavailable\|speech_busy\|speech_timeout`, `VOICE_NO_SPEECH`, `SARVAM_STT_FAILED status=402…`, `VOICE_BUSY`, `VOICE_SENSITIVE_NUMBER` | "voice not available, please type" / "couldn't transcribe" / "without the number" |
 | 10 | Transcript ready, language normalised (`hi-IN`→`hi`) | | `VOICE_TRANSCRIPT_READY language=… source=sarvam\|cache` | |
 | 11 | Conversation (Reader model + deterministic engine) | `conversation_api.conversation` | `VOICE_CONVERSATION_FAILED status=429/503` (rolled back, WAHA retries, transcript reused) | reply after the retry |
 | 12 | Reply committed to the `waha_events` outbox | | | |
@@ -113,7 +113,11 @@ INFO yojana {"code":"WAHA_REPLY_SENT","event":"3f9a1c2e","result":"replied"}
 | `WAHA_MEDIA_UNTRUSTED check=path_prefix\|filename\|traversal\|encoded_separator\|scheme\|userinfo` | Unexpected URL shape. Report the check name; do not loosen the validator. |
 | `WAHA_MEDIA_DOWNLOAD_FAILED status=401` | `WAHA_API_KEY` differs between the services. 404: the file expired (`WHATSAPP_FILES_LIFETIME`) or WAHA restarted. |
 | `WAHA_AUDIO_DECODE_FAILED ffmpeg not installed` | Wrong image. Rebuild from this Dockerfile. |
-| `SARVAM_STT_DISABLED` | Set `SARVAM_STT_ENABLED=true` and `SARVAM_API_KEY`, then restart. |
+| `STT_DISABLED` | Set `STT_PROVIDER=local` and `LOCAL_STT_URL` (docs/LOCAL_STT.md). |
+| `LOCAL_STT_FAILED detail=speech_provider_unavailable` | yojana-stt is down or not ready: check its `/ready` from the yojana-api console and its `model_unavailable` log. |
+| `LOCAL_STT_FAILED detail=speech_timeout` / `speech_busy` | The CPU is too slow or there is a queue. Raise `LOCAL_STT_TIMEOUT_SECONDS`, give the service more CPU, or use `LOCAL_STT_MODEL=base`. |
+| `VOICE_NO_SPEECH` | The note was silent. The citizen is asked to retry or type. |
+| `SARVAM_STT_DISABLED` | (Sarvam only) Set `SARVAM_API_KEY`. |
 | `SARVAM_STT_FAILED status=402` | Sarvam credits are exhausted. This is blocked in-process until restart; top up, then restart. 429: rate limited, blocked for 60 s. 401/403: wrong key. |
 | `VOICE_CONVERSATION_FAILED status=503` | Model provider down. Check `/api/inference/status` and `READER_FALLBACKS`. |
 | `WAHA_REPLY_DELIVERY_FAILED` | Check that the WAHA session is WORKING. WAHA retries the webhook and the outbox prevents duplicates. |

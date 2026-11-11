@@ -99,7 +99,7 @@ def test_voice_same_case_dedup_and_language_switch(channel,monkeypatch):
 def test_stop_during_transcription_cannot_restore_case(channel,monkeypatch):
     client,sender=channel
     signed(client,'YOJANA','activate')
-    def stop(_):
+    def stop(_, hint=None):
         assert signed(client,'STOP','stop').json()['status']=='stopped'
         return {'text':'I am 62','language':'en'}
     monkeypatch.setattr(media,'transcribe',stop)

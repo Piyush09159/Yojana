@@ -227,21 +227,33 @@ def decode(audio):
     return output.getvalue()
 
 
-def transcribe(media):
-    if os.getenv('SARVAM_STT_ENABLED', 'false').lower() != 'true':
-        raise VoiceFailure('SARVAM_STT_DISABLED', 'set SARVAM_STT_ENABLED=true')
+def transcribe(media, hint=None):
+    """Download, decode and transcribe one note. `hint` is the chat's stored language (en/hi/mr)."""
+    provider = speech.stt_provider()
+    if provider == 'off':
+        raise VoiceFailure('STT_DISABLED', 'set STT_PROVIDER=local')
     if not _slots.acquire(blocking=False):
         raise VoiceFailure('VOICE_BUSY', 'two notes already decoding')
     try:
         wav = decode(download(media))
         try:
-            return speech.stt(base64.b64encode(wav).decode('ascii'), 'auto')
+            # The chat's language is only a tie-breaker for the local engine. Sarvam would treat it as
+            # a fixed language, so Sarvam keeps auto-detection as before.
+            language = (hint or 'auto') if provider == 'local' else 'auto'
+            result = speech.stt(base64.b64encode(wav).decode('ascii'), language)
+            return {**result, 'provider': provider}
         except HTTPException as exc:
             detail = exc.detail.get('code') if isinstance(exc.detail, dict) else 'transcript_rejected'
             if exc.status_code == 422 and not isinstance(exc.detail, dict):
                 # _safe_message refused the transcript (spoken identity/bank number).
                 raise VoiceFailure('VOICE_SENSITIVE_NUMBER', 'transcript contained a long number', 422) from None
-            code = 'SARVAM_STT_DISABLED' if detail == 'speech_not_configured' else 'SARVAM_STT_FAILED'
+            prefix = 'LOCAL' if provider == 'local' else 'SARVAM'
+            if detail == 'no_speech':
+                code = 'VOICE_NO_SPEECH'
+            elif detail == 'speech_not_configured':
+                code = f'{prefix}_STT_DISABLED'
+            else:
+                code = f'{prefix}_STT_FAILED'
             raise VoiceFailure(code, detail, exc.status_code) from None
     finally:
         _slots.release()

@@ -31,7 +31,8 @@ production by the audit. Never paste secret values into chat, tickets or Git.
 | `WAHA_BASE_URL` | private WAHA origin, for example `http://yojana_waha:3000` |
 | `WAHA_API_KEY`, `WAHA_SESSION=default`, `WAHA_HMAC_KEY` (≥32) | must match WAHA |
 | `WAHA_MEDIA_ORIGINS` | only if WAHA's own `WAHA_BASE_URL` differs (for example `http://localhost:3000`) |
-| `SARVAM_API_KEY`, `SARVAM_STT_ENABLED=true`, `SARVAM_STT_MODEL=saaras:v3` | voice notes |
+| `STT_PROVIDER=local`, `LOCAL_STT_URL`, `LOCAL_STT_TOKEN`, `LOCAL_STT_TIMEOUT_SECONDS=30` | voice notes through the private yojana-stt service ([LOCAL_STT.md](LOCAL_STT.md)) |
+| `SARVAM_STT_ENABLED=false`, `SARVAM_API_KEY` | Sarvam only for TTS. Speech-to-text never goes to Sarvam when `STT_PROVIDER=local`. |
 | `SCHEME_CATALOG_TTL_SECONDS` | optional, default 60 |
 
 ### yojana-worker (no domain, no port)
