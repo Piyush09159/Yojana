@@ -1,0 +1,26 @@
+# yojana-pdf: application-guide PDFs (FastAPI + WeasyPrint). Deployed on Render (render.yaml).
+# Build:  docker build -f Dockerfile.pdf -t yojana-pdf .
+# Run:    docker run --rm -p 8002:8002 -e PDF_SERVICE_TOKENS=<long random token> yojana-pdf
+# Render sets PORT; locally PDF_PORT (8002) is used.
+FROM python:3.13.17-slim-bookworm
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PDF_PORT=8002 \
+    XDG_CACHE_HOME=/tmp/.cache
+# Pango/PangoFT2 (text layout), HarfBuzz subset (font embedding), Noto Sans + Noto Sans Devanagari.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fontconfig fonts-noto-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && fc-cache -f \
+    && fc-list | grep -q "NotoSansDevanagari-Regular" \
+    && fc-list | grep -q "NotoSans-Regular"
+WORKDIR /app
+COPY requirements-pdf.txt ./
+RUN pip install --no-cache-dir -r requirements-pdf.txt
+COPY pdf_service ./pdf_service
+# Fail the build, not the first request, if WeasyPrint or its libraries are broken.
+RUN python -c "from pdf_service.render import WeasyRenderer; WeasyRenderer().load()"
+USER 10001:10001
+EXPOSE 8002
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/health' % (os.environ.get('PORT') or os.environ.get('PDF_PORT','8002')),timeout=4)"
+CMD ["python", "-m", "pdf_service"]

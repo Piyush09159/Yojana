@@ -1,0 +1,142 @@
+{
+  "language": "hi",
+  "schemes": [
+    {
+      "id": "indira_gandhi_national_widow_pension_scheme",
+      "name": "Indira Gandhi National Widow Pension Scheme",
+      "name_local": null,
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "Rs. 1500 per month (Rs. 300 from Central Government + Rs. 1200 from State scheme)",
+      "conditions_met": [
+        "Widow eligibility",
+        "Age lower limit",
+        "Age upper limit",
+        "Family must be Below Poverty Line"
+      ],
+      "check_yourself": [
+        "Unreviewed extraction: verify all mandatory conditions on the official source."
+      ],
+      "missing_information": [],
+      "documents": [],
+      "how_to_apply": "The applicant can apply at the Collector’s Office / Tehsildar’s Office, Sanjay Gandhi Niradhar Anudan Yojana Branch / Talathi Office.",
+      "apply_url": null,
+      "source_url": "https://sjsa.maharashtra.gov.in/en/scheme/indira-gandhi-national-widow-pension-scheme/",
+      "source_site": "sjsa.maharashtra.gov.in",
+      "agency": "",
+      "last_verified": "2026-10-22"
+    },
+    {
+      "id": "national_family_benefit_scheme",
+      "name": "National Family Benefit Scheme",
+      "name_local": null,
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "One time lump sum financial assistance of Rs. 20,000/-",
+      "conditions_met": [
+        "Under this Scheme in case of accidental or natural death of a primary bread winner in the BPL Family in the age group of 18 to 59 years, the affected family is provided with one time lump sum financia"
+      ],
+      "check_yourself": [
+        "accidental or natural death of a primary bread winner"
+      ],
+      "missing_information": [],
+      "documents": [],
+      "how_to_apply": "The applicant can apply at the Collector’s Office / Tehsildar’s Office, Sanjay Gandhi Niradhar Anudan Yojana Branch / Talathi Office.",
+      "apply_url": null,
+      "source_url": "https://sjsa.maharashtra.gov.in/en/scheme/national-family-benefit-scheme/",
+      "source_site": "sjsa.maharashtra.gov.in",
+      "agency": "Social Justice and Special Assistance Department",
+      "last_verified": "2026-10-23"
+    },
+    {
+      "id": "pradhan_mantri_awas_yojana_gramin_pmay_g",
+      "name": "Pradhan Mantri Awas Yojana – Gramin",
+      "name_local": "प्रधानमंत्री आवास योजना – ग्रामीण",
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "Financial assistance of 1.20 lakh rupees for construction or upgrading of houses for vulnerable sections.",
+      "conditions_met": [
+        "Only for residents of Maharashtra",
+        "Beneficiary must have resided in Maharashtra for at least 15 years.",
+        "The beneficiary must be a resident of Maharashtra.",
+        "Family annual income must be less than 1,20,000."
+      ],
+      "check_yourself": [
+        "Beneficiary must be homeless or have no fixed house."
+      ],
+      "missing_information": [],
+      "documents": [],
+      "how_to_apply": "",
+      "apply_url": null,
+      "source_url": "https://zpamravati.gov.in/scheme/%e0%a4%b0%e0%a4%be%e0%a4%b7%e0%a5%8d%e0%a4%9f%e0%a5%8d%e0%a4%b0%e0%a5%80%e0%a4%af-%e0%a4%ac%e0%a4%be%e0%a4%af%e0%a5%8b%e0%a4%97%e0%a5%85%e0%a4%b8-%e0%a4%b5%e0%a4%bf%e0%a4%95%e0%a4%be%e0%a4%b8/",
+      "source_site": "zpamravati.gov.in",
+      "agency": "Zilla Parishad Amravati",
+      "last_verified": "2026-10-22"
+    },
+    {
+      "id": "pradhan_mantri_awas_yojana_rural",
+      "name": "Pradhan Mantri Awas Yojana – Rural",
+      "name_local": "प्रधानमंत्री आवास योजना - ग्रामीण",
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "Financial assistance for construction of houses for the poor and homeless.",
+      "conditions_met": [
+        "The scheme is intended for citizens below the poverty line."
+      ],
+      "check_yourself": [
+        "Beneficiaries are selected from a permanent waiting list prepared by the Gram Sabha"
+      ],
+      "missing_information": [],
+      "documents": [],
+      "how_to_apply": "Beneficiaries are selected from a permanent waiting list prepared by the Gram Sabha",
+      "apply_url": null,
+      "source_url": "https://zpgondia.gov.in/en/scheme/%e0%a4%aa%e0%a5%8d%e0%a4%b0%e0%a4%a7%e0%a4%be%e0%a4%a8%e0%a4%ae%e0%a4%82%e0%a4%a4%e0%a5%8d%e0%a4%b0%e0%a5%80-%e0%a4%86%e0%a4%b5%e0%a4%be%e0%a4%b8-%e0%a4%af%e0%a5%8b%e0%a4%9c%e0%a4%a8%e0%a4%be/",
+      "source_site": "zpgondia.gov.in",
+      "agency": "Zilla Parishad Gondia",
+      "last_verified": "2026-10-23"
+    },
+    {
+      "id": "asha_accredited_social_health_activist",
+      "name": "ASHA (Accredited Social Health Activist)",
+      "name_local": "आशा",
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "ASHA workers are community health volunteers who receive performance-based incentives for providing health services, counseling, and facilitating access to healthcare in rural areas.",
+      "conditions_met": [
+        "Minimum age requirement for ASHA selection.",
+        "Maximum age requirement for ASHA selection.",
+        "Eligible marital status categories."
+      ],
+      "check_yourself": [
+        "Must be a resident of the local village.",
+        "Should have an interest in social work.",
+        "minimum education requirement is 8th standard.",
+        "Some conditions on the official page could not be read automatically; check the full eligibility on the source page."
+      ],
+      "missing_information": [],
+      "documents": [
+        {
+          "name": "Proof of residence",
+          "issued_by": null
+        },
+        {
+          "name": "Educational certificates",
+          "issued_by": null
+        },
+        {
+          "name": "Caste certificate (if applicable)",
+          "issued_by": null
+        }
+      ],
+      "how_to_apply": "The selection is done by the local Gram Panchayat. Contact the relevant department for application details.",
+      "apply_url": null,
+      "source_url": "https://www.zpbeed.gov.in/scheme/%e0%a4%86%e0%a4%b6%e0%a4%be/",
+      "source_site": "zpbeed.gov.in",
+      "agency": "Zilla Parishad Beed",
+      "last_verified": "2026-10-23"
+    }
+  ],
+  "recipient_name": "सुनीता देवी (नमूना)",
+  "reference": "SAMPLE-HI",
+  "generated_on": "2026-11-11"
+}

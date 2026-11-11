@@ -1,0 +1,31 @@
+# Render Blueprint for the PDF service only (the main backend runs on EasyPanel).
+# Render: New > Blueprint > pick this repository. Secrets are never stored here: PDF_SERVICE_TOKENS
+# has sync: false, so Render asks for its value once in the dashboard.
+services:
+  - type: web
+    name: yojana-pdf
+    runtime: docker
+    dockerfilePath: ./Dockerfile.pdf
+    dockerContext: .
+    branch: feat/pdf-guides          # change to the merge branch (refactor) once the PR is merged
+    plan: free                       # free instances sleep when idle: first request can take ~1 minute
+    region: singapore
+    healthCheckPath: /health
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - pdf_service/**
+        - Dockerfile.pdf
+        - requirements-pdf.txt
+        - render.yaml
+    envVars:
+      - key: PDF_SERVICE_TOKENS      # comma-separated; the backend's PDF_SERVICE_TOKEN must be one of them
+        sync: false
+      - key: PDF_MAX_SCHEMES
+        value: "10"
+      - key: PDF_MAX_GUIDES
+        value: "5"
+      - key: PDF_MAX_BODY_BYTES
+        value: "262144"
+      - key: PDF_CONCURRENCY
+        value: "2"
