@@ -16,6 +16,7 @@ also the default until a real phone has shown the list (see docs/WHATSAPP_MENUS.
 from __future__ import annotations
 
 import os
+import re
 import time
 
 from core.language_detect import clean
@@ -24,6 +25,11 @@ MENU_TTL = 3600          # a number is read as a menu choice for one hour after 
 
 LANGUAGE_IDS = ('lang:en', 'lang:hi', 'lang:mr')
 MAIN_IDS = ('menu:chat', 'menu:call', 'menu:updates', 'menu:language')
+# Result review (web/result_review.py) and call offer (web/followup_calls.py). Row ids sent in a list
+# carry the review version, e.g. review:proceed:3, so a tap on an old list cannot approve newer facts.
+REVIEW_IDS = ('review:proceed', 'review:change', 'review:help')
+CALL_IDS = ('call:yes', 'call:no')
+VERSIONED = re.compile(r'^(review:(?:proceed|change|help)|call:(?:yes|no))(?::(\d{1,6}))?$')
 
 LANGUAGE_ROWS = {'lang:en': 'English', 'lang:hi': 'हिंदी (Hindi)', 'lang:mr': 'मराठी (Marathi)'}
 
@@ -83,7 +89,9 @@ def selected_row_id(payload):
         if isinstance(reply, dict):
             single = reply.get('singleSelectReply') or {}
             row = single.get('selectedRowId') if isinstance(single, dict) else None
-            return row if isinstance(row, str) and row in LANGUAGE_IDS + MAIN_IDS else None
+            if isinstance(row, str) and (row in LANGUAGE_IDS + MAIN_IDS or VERSIONED.match(row)):
+                return row
+            return None
         inner = None
         for wrapper in ('ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'documentWithCaptionMessage'):
             if isinstance(message.get(wrapper), dict):
@@ -102,8 +110,10 @@ def choice(text, open_menu=None, row_id=None):
     value = clean(first_line)
     if not value:
         return None
-    if value.isdigit() and open_menu in ('language', 'main'):
-        options = LANGUAGE_IDS if open_menu == 'language' else MAIN_IDS
+    if value.isdigit() and open_menu == 'change':
+        return f'change:{int(value)}' if len(value) <= 3 else 'invalid'
+    if value.isdigit() and open_menu in ('language', 'main', 'review', 'call'):
+        options = {'language': LANGUAGE_IDS, 'main': MAIN_IDS, 'review': REVIEW_IDS, 'call': CALL_IDS}[open_menu]
         index = int(value)
         return options[index - 1] if 1 <= index <= len(options) else 'invalid'
     if '\n' in (text or '') and value not in _WORD_TO_ID:
@@ -213,8 +223,43 @@ VOICE_REJECTED = {
 }
 
 
-def list_message(menu, lang):
+def split_versioned(option):
+    """'review:proceed:3' -> ('review:proceed', 3); 'review:proceed' -> ('review:proceed', None)."""
+    m = VERSIONED.match(option or '')
+    if not m:
+        return option, None
+    return m.group(1), int(m.group(2)) if m.group(2) else None
+
+
+def _body(text):
+    """The part of a numbered fallback text before its first option line ("1. ...")."""
+    lines = (text or '').split('\n')
+    for i, line in enumerate(lines):
+        if line.startswith('1. '):
+            return '\n'.join(lines[:i]).strip()
+    return (text or '').strip()
+
+
+def list_message(menu, lang, text=''):
     """The WAHA /api/sendList `message` object for a menu."""
+    lang = lang if lang in ('en', 'hi', 'mr') else 'en'
+    kind, _, version = (menu or '').partition('.')
+    if kind == 'review':
+        from .result_review import CHOOSE, REVIEW_ROWS, REVIEW_TITLE
+        rows = REVIEW_ROWS[lang]
+        return {'title': REVIEW_TITLE[lang], 'description': _body(text)[:1000], 'footer': SAFETY[lang][:60],
+                'button': CHOOSE[lang],
+                'sections': [{'title': REVIEW_TITLE[lang][:24],
+                              'rows': [{'title': rows[k][0], 'rowId': f'review:{k}:{version}', 'description': rows[k][1]}
+                                       for k in ('proceed', 'change', 'help')]}]}
+    if kind == 'call':
+        from .followup_calls import OFFER_ROWS
+        rows = OFFER_ROWS[lang]
+        return {'title': 'Yojana Saathi', 'description': _body(text)[:1000], 'footer': SAFETY[lang][:60],
+                'button': {'en': 'Choose', 'hi': 'चुनें', 'mr': 'निवडा'}[lang],
+                'sections': [{'title': {'en': 'Follow-up call', 'hi': 'फ़ॉलो-अप कॉल', 'mr': 'फॉलो-अप कॉल'}[lang],
+                              'rows': [{'title': rows[0][0], 'rowId': f'call:yes:{version}', 'description': rows[0][1]},
+                                       {'title': rows[1][0], 'rowId': f'call:no:{version}', 'description': rows[1][1]}]}]}
     if menu == 'language':
         return {'title': 'Yojana Saathi · योजना साथी',
                 'description': language_menu_text()[:1000],

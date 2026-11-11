@@ -8,6 +8,8 @@ import sys
 
 MODULES = [
     'web.app', 'web.waha_bridge', 'web.waha_media', 'web.speech', 'web.public_cache', 'web.diagnostics',
+    'web.pdf_client', 'web.pdf_api', 'web.bolna', 'web.followup_calls', 'web.whatsapp_delivery',
+    'web.result_review', 'web.delivery_worker',
     'saathi.orchestrator', 'saathi.short_answer', 'saathi.reply',
     'agents.reader', 'agents.replier', 'agents.scout', 'agents.extractor', 'agents.verifier', 'agents.runner',
     'worker.__main__', 'worker.jobs', 'worker.loop',

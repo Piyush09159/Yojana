@@ -74,8 +74,20 @@ async def lifespan(app):
             except Exception:
                 import logging
                 logging.getLogger(__name__).error('Summary queue pass failed; inspect service readiness')
+    async def deliveries():
+        # Confirmed WhatsApp results: PDF guide, call offer, consented follow-up calls (web/delivery_worker.py).
+        from .delivery_worker import poll_seconds, run_once
+        while True:
+            await asyncio.sleep(poll_seconds())
+            try:
+                await asyncio.to_thread(run_once)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).error('Delivery queue pass failed; inspect service readiness')
     task = asyncio.create_task(retention()) if case_store.enabled() else None
     summary_task = asyncio.create_task(summaries()) if case_store.enabled() else None
+    from .delivery_worker import active as delivery_active
+    delivery_task = asyncio.create_task(deliveries()) if delivery_active() else None
     try:
         yield
     finally:
@@ -85,12 +97,13 @@ async def lifespan(app):
                 await task
             except asyncio.CancelledError:
                 pass
-        if summary_task:
-            summary_task.cancel()
-            try:
-                await summary_task
-            except asyncio.CancelledError:
-                pass
+        for background in (summary_task, delivery_task):
+            if background:
+                background.cancel()
+                try:
+                    await background
+                except asyncio.CancelledError:
+                    pass
 
 
 def install(app):
@@ -99,7 +112,9 @@ def install(app):
     async def boundaries(request, call_next):
         path = request.url.path
         if path.startswith('/api/'):
-            max_body = 750000 if path == '/api/voice/stt' else 131072 if path == '/api/webhooks/waha' else 32768
+            # Bolna status webhooks can carry a transcript, so they get the webhook limit too.
+            max_body = 750000 if path == '/api/voice/stt' else 131072 if (
+                path == '/api/webhooks/waha' or path.startswith('/api/bolna/')) else 32768
             length = request.headers.get('content-length', '0')
             try:
                 if int(length) > max_body:
@@ -155,6 +170,11 @@ def install(app):
         except Exception:
             ok = False
         return JSONResponse({'status': 'ready' if ok else 'not_ready'}, status_code=200 if ok else 503)
+
+    @app.get('/api/health/delivery', include_in_schema=False)
+    def delivery_health():
+        from .delivery_worker import health
+        return health()
 
     @app.get('/api/inference/status')
     def provider_status():

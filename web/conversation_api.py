@@ -407,6 +407,33 @@ def _conversation(body, access_token, trusted, tx):
             "disclaimer": "Recommendations are informational; verify unreviewed schemes against official sources."})
 
 
+def confirmed_results(state):
+    """Recompute the deterministic recommendations for a case's current, citizen-approved facts
+    (WhatsApp PROCEED). Same engine path as a conversation turn; nothing is saved here."""
+    profile = {**(state.get('profile') or {}), '_intent': state.get('intent_context') or {}}
+    catalog = relevant_catalog(profile, load_catalog())
+    shortlist = _shortlist_public(profile, catalog) if catalog else {'start_with': None, 'others': [],
+                                                                     'needs_information': [], 'schemes_checked': 0}
+    count = state.get('question_count', len(state.get('asked') or []))
+    decision = decide({**profile, '_asked': list(state.get('asked') or [])}, catalog, shortlist, count)
+    decision.pop('next_candidate', None)
+    return decision, catalog
+
+
+def question_for_field(field):
+    """Pending-question dict for one field, so a short correction ("64", "ho") is read by code."""
+    from core.assessment import important_question
+    c = important_question(field, {'_asked': []})
+    if not c:
+        return None
+    question = c['question']
+    return {'field': field, 'text': question.get('text_en') or field,
+            'reason': 'Correction requested by the citizen', 'choices': question.get('choices', []),
+            'type': question.get('type', 'text'), 'qid': question['id'], 'fields': question['fields'],
+            'text_en': question.get('text_en', ''), 'text_hi': question.get('text_hi'),
+            'text_mr': question.get('text_mr'), 'synthetic': question.get('synthetic', False)}
+
+
 @router.post('/api/v2/conversation')
 def conversation_http(body: Message, request: Request, response: Response):
     token = owner(request)

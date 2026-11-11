@@ -26,6 +26,8 @@ from .privacy import redact
 from .channel_security import seal, unseal
 from .diagnostics import emit
 from . import whatsapp_menu as menu
+from . import result_review as review
+from . import followup_calls as calls
 from core.language_detect import detect, switch_request, CONFIRM, SWITCH_HINT
 
 router = APIRouter(tags=["WhatsApp (opt-in beta)"])
@@ -154,7 +156,7 @@ def _deliver(url, key, session, chat_id, stored, event_id):
     menu_name, lang, text = _split_list(stored)
     if menu_name and menu.interactive_enabled():
         try:
-            _send_list(url, key, session, chat_id, menu.list_message(menu_name, lang if lang in ('en', 'hi', 'mr') else 'en'))
+            _send_list(url, key, session, chat_id, menu.list_message(menu_name, lang if lang in ('en', 'hi', 'mr') else 'en', text))
             emit('WAHA_LIST_SENT', event=event_id, menu=menu_name)
             return
         except (httpx.HTTPError, OSError) as exc:
@@ -347,6 +349,8 @@ def _handle(tx, p, chat, chat_hash, text, event_id, mapping, media_error, media_
         if mapping['session_id']:
             tx.lock(mapping['session_id'])
             tx.execute('DELETE FROM case_sessions WHERE id=?', (mapping['session_id'],))
+        # Pending PDF/call work is cancelled and its ciphers scrubbed before the chat row goes.
+        review.cancel_all(tx, chat_hash, 'stop')
         notifications.remove(tx, chat_hash)
         tx.execute('DELETE FROM waha_chats WHERE chat_hash=?', (chat_hash,))
         tx.execute("UPDATE waha_events SET status='sent',reply=NULL,result='cancelled' WHERE chat_hash=?", (chat_hash,))
@@ -376,6 +380,11 @@ def _handle(tx, p, chat, chat_hash, text, event_id, mapping, media_error, media_
             return 'voice_rejected', menu.VOICE_REJECTED[lang], lang
 
     if confirmed is None:
+        # Voice transcripts never count as PROCEED / CALL ME: approvals and consent must be typed or tapped.
+        handled = _review_command(tx, '' if voice else text, chat, chat_hash, mapping, lang, command, option,
+                                  open_menu, event_id)
+        if handled:
+            return handled
         if command in notifications.UPDATES_ON | notifications.UPDATES_OFF | notifications.UPDATES_STATUS or option == 'menu:updates':
             _menu_state(tx, chat_hash, menu=None, menu_at=None)
             status, reply = notifications.handle_command(tx, chat_hash, chat, lang, command if option != 'menu:updates' else 'updates')
@@ -398,6 +407,9 @@ def _handle(tx, p, chat, chat_hash, text, event_id, mapping, media_error, media_
             lang = chosen
             _menu_state(tx, chat_hash, preferred_language=lang, hinted_language=None)
             question = _set_session_language(tx, mapping, lang)
+            awaiting = _awaiting_review(tx, chat_hash, mapping, lang, CONFIRM[lang]) if not question else None
+            if awaiting:
+                return awaiting                 # the open review, re-shown in the new language
             if question:
                 # Mid-assessment: confirm and re-ask the same question; nothing restarts.
                 _menu_state(tx, chat_hash, menu=None, menu_at=None)
@@ -439,9 +451,13 @@ def _handle(tx, p, chat, chat_hash, text, event_id, mapping, media_error, media_
         return 'voice_confirm', menu.VOICE_CONFIRM[reply_lang].format(text=text[:400]), reply_lang
     sid = mapping['session_id'] if _live_session(tx, mapping['session_id']) else None
     other_script = any(c.isalpha() and ord(c) > 127 and not 'ऀ' <= c <= 'ॿ' for c in text)
+    latest_review = review.latest(tx, chat_hash) if sid else None
+    # After CHANGE, the next answers use the explicit-correction path (core validation unchanged).
+    correcting = bool(latest_review and latest_review['status'] == 'changing')
     try:
         result = conversation(Message(text=text, session_id=sid, request_id=event_id, lang=reply_lang,
-                                      language_override=not other_script), trusted=True, tx=tx)
+                                      language_override=not other_script, correct_facts=correcting),
+                              trusted=True, tx=tx)
     except HTTPException as exc:
         if voice:
             emit('VOICE_CONVERSATION_FAILED', event=event_id, status=exc.status_code,
@@ -456,6 +472,13 @@ def _handle(tx, p, chat, chat_hash, text, event_id, mapping, media_error, media_
     reply = redact(result['message'])
     lang = result.get('language', reply_lang)
     notifications.update_profile(tx, chat_hash, chat, result.get('profile', {}), lang)
+    if (review.review_enabled() and result.get('assessment_complete') and not result.get('question')
+            and not result.get('language_switched')):
+        # The assessment is complete: show the recorded facts for approval instead of the schemes.
+        gated = review.request_review(tx, chat_hash, result['session_id'], result.get('profile') or {},
+                                      lang, event_id)
+        if gated:
+            return _review_reply(tx, chat_hash, gated, lang)
     if lang not in ('en', 'hi', 'mr'):
         reply = 'This language is registered but not verified for this demo. Please use English, Hindi or Marathi.\n' + reply
     elif preferred and sure and turn != preferred and (not menu_row or menu_row['hinted_language'] != turn):
@@ -463,6 +486,158 @@ def _handle(tx, p, chat, chat_hash, text, event_id, mapping, media_error, media_
         reply += '\n\n' + SWITCH_HINT[turn]
         _menu_state(tx, chat_hash, hinted_language=turn)
     return 'replied', reply, lang
+
+
+# ---------------------------------------------------------------- result review (PROCEED/CHANGE/HELP)
+# Active only once a chat has a review (SCHEME_REVIEW_CONFIRMATION_ENABLED). Decisions use the
+# list row id first (review:proceed:3), then a number while that menu is open, then words.
+
+_REVIEW_TITLES = {'review:proceed': {rows['proceed'][0].casefold() for rows in review.REVIEW_ROWS.values()},
+                  'review:change': {rows['change'][0].casefold() for rows in review.REVIEW_ROWS.values()}}
+
+
+def _review_reply(tx, chat_hash, gated, lang):
+    status, text, menu_name = gated
+    _menu_state(tx, chat_hash, menu='review', menu_at=time.time())
+    return status, _with_list(menu_name, lang, text), lang
+
+
+def _awaiting_review(tx, chat_hash, mapping, lang, lead=None):
+    """Re-show an open review (e.g. after a language change). None when no review is open."""
+    if not review.review_enabled():
+        return None
+    row = review.latest(tx, chat_hash)
+    session = _live_session(tx, mapping['session_id']) if mapping else None
+    if not row or row['status'] != 'awaiting' or not session:
+        return None
+    gated = review.request_review(tx, chat_hash, mapping['session_id'], session['state'].get('profile') or {},
+                                  lang, None, lead=lead)
+    return _review_reply(tx, chat_hash, gated, lang) if gated else None
+
+
+def _review_kind(text, command, option, open_menu):
+    kind, version = menu.split_versioned(option) if option and option != 'invalid' else (None, None)
+    if kind:
+        return kind, version
+    first = command_text((text or '').split('\n', 1)[0])
+    for word in (command, first):
+        if word in review.PROCEED_WORDS or word in _REVIEW_TITLES['review:proceed'] or (
+                open_menu == 'review' and word in menu.YES):
+            return 'review:proceed', None
+        if word in review.CHANGE_WORDS or word in _REVIEW_TITLES['review:change'] or (
+                open_menu == 'review' and word in menu.NO):
+            return 'review:change', None
+        if word in calls.CALL_YES_WORDS:
+            return 'call:yes', None
+        if word in calls.CALL_NO_WORDS:
+            return 'call:no', None
+        if word in review.GUIDE_WORDS:
+            return 'guide', None
+        if word in menu.HELP:
+            return 'review:help', None
+    return None, None
+
+
+def _review_command(tx, text, chat, chat_hash, mapping, lang, command, option, open_menu, event_id):
+    """PROCEED / CHANGE / HELP / CALL ME / NO CALL / GUIDE, only once this chat has a review.
+    Returns (status, reply, lang), or None to continue with the normal handling."""
+    row = review.latest(tx, chat_hash)
+    if not row or row['status'] == 'cancelled':
+        return None
+    kind, version = _review_kind(text, command, option, open_menu)
+    if not review.review_enabled() and kind != 'call:no':
+        return None                         # rollback: the gate is off, but NO CALL always works
+    if option == 'invalid' and open_menu == 'review':
+        again = _awaiting_review(tx, chat_hash, mapping, lang, menu.INVALID[lang])
+        if again:
+            return again
+    if option == 'invalid' and open_menu == 'call':
+        return 'invalid_choice', menu.INVALID[lang], lang
+    if kind == 'review:help':
+        help_text = review.help_text(tx, chat_hash, lang)
+        return ('review_help', help_text, lang) if help_text else None
+    if kind == 'review:proceed':
+        return _proceed(tx, chat, chat_hash, mapping, lang, event_id, version)
+    if kind == 'review:change':
+        return _change(tx, chat_hash, mapping, lang)
+    if kind and kind.startswith('change:'):
+        return _change_field(tx, chat_hash, mapping, lang, int(kind[7:]))
+    if kind in ('call:yes', 'call:no'):
+        status, reply = calls.choose(tx, chat_hash, chat, lang, event_id, kind == 'call:yes', version)
+        _menu_state(tx, chat_hash, menu=None, menu_at=None)
+        return status, reply, lang
+    if kind == 'guide':
+        status, reply = review.guide_command(tx, chat_hash, lang)
+        return status, reply, lang
+    return None
+
+
+def _proceed(tx, chat, chat_hash, mapping, lang, event_id, version):
+    row = review.latest(tx, chat_hash)
+    if row['status'] == 'confirmed':
+        return 'already_confirmed', review.ALREADY_CONFIRMED[lang], lang
+    session = _live_session(tx, mapping['session_id'])
+    pending = _pending_question(tx, mapping, lang)
+    if row['status'] != 'awaiting' or not session:
+        return 'nothing_to_confirm', review.NOTHING_TO_CONFIRM[lang] + ('\n\n' + pending if pending else ''), lang
+    state = session['state']
+    complete = bool((state.get('assessment') or {}).get('assessment_complete')) and not state.get('pending')
+    if version is not None and version != row['version']:
+        # A tap on an older list: never approve; show the current summary instead.
+        gated = review.request_review(tx, chat_hash, mapping['session_id'], state.get('profile') or {}, lang,
+                                      event_id, lead=review.STALE[lang])
+        return _review_reply(tx, chat_hash, gated, lang)
+    if review.facts_hash(state.get('profile')) != row['facts_hash'] or row['session_id'] != mapping['session_id']:
+        if complete:
+            gated = review.request_review(tx, chat_hash, mapping['session_id'], state.get('profile') or {}, lang,
+                                          event_id, lead=review.FACTS_CHANGED[lang])
+            return _review_reply(tx, chat_hash, gated, lang)
+        review.supersede(tx, chat_hash, 'facts_changed')
+        return 'nothing_to_confirm', review.NOTHING_TO_CONFIRM[lang] + ('\n\n' + pending if pending else ''), lang
+    if not review.mark_once(tx, chat_hash, row['version'], 'results'):
+        return 'already_confirmed', review.ALREADY_CONFIRMED[lang], lang
+    review.confirm(tx, row, event_id)
+    from core.assessment import final_answer
+    from .conversation_api import confirmed_results
+    from .pdf_client import guide_from_cards
+    decision, catalog = confirmed_results(state)
+    cards = decision['recommendations'][:5]
+    guide = guide_from_cards(cards, catalog, language=lang)
+    guide_count = len(guide['schemes']) if guide else 0
+    pdf_status = review.create_delivery(tx, row, chat, cards, guide_count, lang, event_id)
+    _menu_state(tx, chat_hash, menu=None, menu_at=None)
+    text = review.results_text(redact(final_answer(decision)), len(cards), guide_count, pdf_status, lang)
+    return 'profile_confirmed', text, lang
+
+
+def _change(tx, chat_hash, mapping, lang):
+    session = _live_session(tx, mapping['session_id'])
+    profile = (session['state'].get('profile') or {}) if session else {}
+    text, fields = review.start_change(tx, chat_hash, profile, lang)
+    _menu_state(tx, chat_hash, menu='change' if fields else None, menu_at=time.time() if fields else None)
+    return 'change_requested', text, lang
+
+
+def _change_field(tx, chat_hash, mapping, lang, number):
+    row = review.latest(tx, chat_hash)
+    session = _live_session(tx, mapping['session_id'])
+    if not row or row['status'] != 'changing' or not session:
+        return None
+    state = session['state']
+    fields = review.shown_fields(state.get('profile'))
+    question = None
+    if 1 <= number <= len(fields):
+        from .conversation_api import question_for_field
+        question = question_for_field(fields[number - 1])
+    if not question:
+        text, _ = review.start_change(tx, chat_hash, state.get('profile') or {}, lang)
+        return 'invalid_choice', menu.INVALID[lang] + '\n\n' + text, lang
+    tx.lock(mapping['session_id'])
+    state['pending'] = question
+    tx.save(mapping['session_id'], state, kind=session['kind'])
+    _menu_state(tx, chat_hash, menu=None, menu_at=None)
+    from .conversation_api import pending_question_text
+    return 'change_field', review.CHANGE_FIELD[lang] + '\n\n' + pending_question_text(state, lang), lang
 
 
 STOPPED = 'Yojana-Pilot stopped. The local case was cleared. Send YOJANA to opt in again. WAHA/provider logs have separate retention policies.'
@@ -589,4 +764,6 @@ def persistent_event(body):
             raise HTTPException(503, 'Delivery pending; retry this event')
         emit('WAHA_REPLY_SENT', event=event_id, result=event['result'])
         tx.execute('UPDATE waha_events SET status=?,updated_at=? WHERE id=?', ('sent', time.time(), event_id))
+        if event['result'] == 'profile_confirmed':
+            review.event_sent(tx, event_id)     # scheme text accepted by WAHA: the PDF stage may start
         return {'status': event['result']}

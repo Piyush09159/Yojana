@@ -11,12 +11,34 @@ This file is the project's history, newest entry first. Read it top to bottom to
 | | |
 |---|---|
 | Version | v2.8 integration: refactor (v2.4 deployment, v2.5 citizen experience, WhatsApp, voice, Redis cache, scheme alerts) + scheme database + agent orchestration |
-| Last updated | 2026-11-11 |
-| Tests | 709 passed, 14 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (54/54 STT tests passed in the STT venv); real-Chrome /voice smoke via scripts/voice_browser_smoke.py |
+| Last updated | 2026-11-12 |
+| Tests | 825 passed, 15 skipped offline (no network; PDF service tests need requirements-dev.txt); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (54/54 STT tests passed in the STT venv); real-Chrome /voice smoke via scripts/voice_browser_smoke.py |
 | Phase | refactor demo plus PostgreSQL scheme catalog (SCHEME_DATABASE_URL), five agents, background job lanes |
 | Schemes | 267 public scheme records in data/schemes.db; 270 in the Neon catalog; 523 pages queued |
 | Eval | eligibility 36/36, start-with 12/12, name matcher P=R=1.00 (small sets); Reader agent 52/53 (98%); Verifier 5/5 caught, 0/3 wrongly dropped |
-| Next task | Review/commit feat/multilingual-conversation-ux; deploy; run the WhatsApp checklist (docs/WHATSAPP_MENUS.md) incl. interactive lists on real Android/iOS before setting WAHA_INTERACTIVE_LISTS=true; mobile-browser checklist (docs/BROWSER_VOICE.md); Marathi STT (IndicConformer benchmark) |
+| Next task | Rotate the Bolna key/secret exposed on feature/call-agent; review PR feat/confirmed-results-pdf-bolna-followup; apply migrations 006/007 on a disposable Neon branch; deploy with flags off, then enable review gate -> PDF -> call (docs/RESULT_DELIVERY.md) |
+
+---
+
+## Confirmed WhatsApp results, PDF guide over WhatsApp, consented Bolna follow-up call: 2026-11-12
+
+**Who:** Claude (Opus 5.5), branch `feat/confirmed-results-pdf-bolna-followup` from `origin/refactor` (535b2a5). Not deployed.
+
+**Why:** owner request: do not send scheme results on WhatsApp until the citizen has checked the recorded facts, send the guide as one PDF, and offer one optional automated follow-up call with separate consent.
+
+**What:**
+* **Ported** `feat/pdf-guides` by merge (pdf_service, `web/pdf_client.py`, `web/pdf_api.py`, Render files, tests; CLAUDE/PROGRESS conflicts resolved by keeping both sides). From `feature/call-agent`, only `web/bolna.py` (verification calls, now behind `BOLNA_VERIFICATION_ENABLED`, terminal no-answer/failed statuses fixed), its migration (renamed `006_bolna_verification.sql`), tests and the webhook body limit. Its `deploy/.env.example` with live-looking Bolna values was **not** ported; those values must be revoked in Bolna.
+* **Review gate** (`web/result_review.py`, `web/waha_bridge.py`, `SCHEME_REVIEW_CONFIRMATION_ENABLED`): on assessment completion WhatsApp gets a short review of whitelisted facts (income as a band) with Proceed / Change / Help, as a NOWEB list (`review:<action>:<version>`) or numbered text, in en/hi/mr. Words and numbers work too. PROCEED re-hashes the profile, so a stale approval never releases old results. CHANGE lists numbered facts, asks the chosen question (short answers read by code) and uses the existing explicit-correction path; a new version needs a new PROCEED. HELP is context-aware and changes nothing. Language change re-shows an open review. Browser behaviour is unchanged.
+* **Delivery** (`web/whatsapp_delivery.py`, migration `007_result_delivery.sql`, `WHATSAPP_PDF_SEND_ENABLED`): after PROCEED the shortlist text goes through the existing outbox. Only when WAHA accepted it is one bundled PDF (up to 5 schemes, schemes without an official source left out and the citizen told) generated and sent with WAHA `/api/sendFile` (base64, PDF magic and size checked). Leases, 30 s/2 min/10 min backoff, max attempts, one localized failure notice, GUIDE to retry. Render cold start: `warm_up()` plus retries.
+* **Follow-up call** (`web/followup_calls.py`, `BOLNA_FOLLOWUP_ENABLED`): a separate Call me / No call offer only after the PDF was accepted, only for `<digits>@c.us` chats (never @lid), naming the last 4 digits and stating automated, independent, not government, no Aadhaar/OTP/bank. CALL ME stores consent evidence and queues one durable call about 8 s later. The runner re-checks flag, consent, opt-in, review and PDF, defers during quiet hours (IST 21:00-09:00), commits `dialing` before the HTTP call (no redial after crashes or timeouts), disables Bolna retries, wipes the number after use. The status webhook (path secret plus authoritative GET /executions) updates only the call row; late webhooks are ignored. NO CALL, CHANGE and STOP cancel queued calls.
+* **Runner** (`web/delivery_worker.py`): API-startup loop by default or `python -m web.delivery_worker`; `/api/health/delivery` shows flags and the last pass. STOP scrubs addresses, phone ciphers and snapshots; retention purge covers the new tables.
+* Docs: `docs/RESULT_DELIVERY.md` (runbook, env, Bolna agent script in en/hi/mr, checks, rollback); `docs/PDF_SERVICE.md`, `.env.example`, `deploy/.env.example` (empty placeholders), `deploy/smoke_imports.py`, CLAUDE.md.
+
+**Tests:** new `tests/test_whatsapp_approval.py` (16), `tests/test_whatsapp_pdf_delivery.py` (20), `tests/test_followup_calls.py` (34, incl. a voice transcript "call me" is not consent), `tests/test_bolna.py` (9). Full suite: **825 passed, 15 skipped**. Secret scan (detect-secrets): only existing placeholders/fixtures; the leaked Bolna values are absent from this branch.
+
+**Not verified:** migrations on PostgreSQL/Neon (SQLite only here); live WAHA sendFile and list rendering on phones; live Render; any live Bolna call or webhook body shape; India DND/consent compliance; OTP form for @lid (not built).
+
+**Next:** see Current state.
 
 ---
 

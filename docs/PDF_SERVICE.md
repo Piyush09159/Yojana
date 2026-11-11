@@ -6,7 +6,7 @@ documents to keep ready, how to apply as the official source publishes it, and o
 QR codes. It runs on Render; the main backend (EasyPanel) is its only caller.
 
 ```
-Citizen (website, later WhatsApp)
+Citizen (website download, or WhatsApp document after PROCEED)
    │  GET /api/v2/conversation/{session_id}/guide.pdf     owner cookie only, no secret
    ▼
 yojana-api (EasyPanel)   web/pdf_api.py: checks ownership, rebuilds the shortlist with the engine,
@@ -149,8 +149,11 @@ EasyPanel only, never in the repository, a chat, or a log.
   `503 pdf_unavailable` (with `Retry-After: 30`) or `502 pdf_failed`. It returns `404 pdf_disabled`
   until `PDF_SERVICE_URL` is set. The frontend only needs a link or button pointing at this URL; no
   frontend change is included in this branch.
-- **WhatsApp (future):** the same two calls give the bytes to send as a document through WAHA:
-  `pdf = PdfClient.from_env().generate(guide_from_cards(shortlist_cards(shortlist), catalog, language=lang))`.
+- **WhatsApp (built, `WHATSAPP_PDF_SEND_ENABLED`):** after the citizen confirms their facts (PROCEED),
+  `web/whatsapp_delivery.py` builds one guide from the confirmed shortlist (up to 5 schemes, those
+  without an official source left out), calls `warm_up()` then `generate()`, and sends it with WAHA
+  `POST /api/sendFile` as `yojana-guide-<lang>.pdf`. Bounded retries; the token stays server-side.
+  See docs/RESULT_DELIVERY.md.
 - **Cold starts:** a free Render instance sleeps when idle. Call `PdfClient.warm_up()` when a
   conversation reaches results, so the service is awake by the time the citizen taps download.
 

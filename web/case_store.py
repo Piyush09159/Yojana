@@ -136,8 +136,13 @@ def purge():
         tx.execute('DELETE FROM voice_links WHERE expires_at<?', (now,))
         tx.execute('DELETE FROM case_grants WHERE expires_at<?', (now,))
         tx.execute('DELETE FROM waha_events WHERE updated_at<?', (now - 7 * 86400,))
-        tx.execute('DELETE FROM waha_chats WHERE updated_at<?',
-                   (now - max(1, min(int(os.getenv('CASE_RETENTION_DAYS', '30')), 365)) * 86400,))
+        retention = max(1, min(int(os.getenv('CASE_RETENTION_DAYS', '30')), 365)) * 86400
+        tx.execute('DELETE FROM waha_chats WHERE updated_at<?', (now - retention,))
+        # Confirmed-result delivery and call audit rows follow the same case retention.
+        for table, column in (('followup_calls', 'updated_at'), ('call_consents', 'created_at'),
+                              ('result_deliveries', 'updated_at'), ('result_reviews', 'created_at'),
+                              ('delivery_idempotency', 'created_at')):
+            tx.execute(f'DELETE FROM {table} WHERE {column}<?', (now - retention,))
 
 
 def ready():
