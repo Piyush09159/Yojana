@@ -286,7 +286,7 @@ def persistent_event(body):
                 media_detail = getattr(exc, 'detail', None)
                 emit(media_error, event=event_id, stage='transcribe', status=getattr(exc, 'status', None),
                      detail=getattr(exc, 'detail', None) or type(exc).__name__,
-                     ms=int((time.monotonic() - started) * 1000))
+                     ms=int((time.monotonic() - started) * 1000), **(getattr(exc, 'flags', None) or {}))
     with case_store.transaction(lock) as tx:
         event = tx.execute('SELECT * FROM waha_events WHERE id=?', (event_id,)).fetchone()
         if event and event['chat_hash'] != chat_hash:
