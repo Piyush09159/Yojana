@@ -5,6 +5,10 @@ document.documentElement.classList.add('js');
 // is needed to read the website or change its language.
 const translations = {
   hi: {
+    whatsappQrEyebrow: 'WHATSAPP पर बात करें',
+    whatsappQrTitle: 'स्कैन करें। भेजें। शुरू करें।',
+    whatsappQrText: 'QR स्कैन करें या नीचे दबाएँ। WhatsApp में YOJANA पहले से लिखा होगा — बस भेजें।',
+    whatsappQrButton: 'WhatsApp खोलें ↗',
     skip: 'मुख्य सामग्री पर जाएँ', language: 'वेबसाइट की भाषा',
     navHow: 'कैसे काम करता है', navFeatures: 'सुविधाएँ', navFaq: 'सामान्य प्रश्न', openApp: 'ऐप खोलें',
     eyebrow: 'लोगों के लिए बना। जानकारी पर आधारित।',
@@ -46,6 +50,10 @@ const translations = {
     menuOpen: 'नेविगेशन खोलें', menuClose: 'नेविगेशन बंद करें', pageTitle: 'Yojana-Pilot — सहायता तक पहुँचने का स्पष्ट रास्ता'
   },
   mr: {
+    whatsappQrEyebrow: 'WHATSAPP वर संवाद',
+    whatsappQrTitle: 'स्कॅन करा. पाठवा. सुरू करा.',
+    whatsappQrText: 'QR स्कॅन करा किंवा खाली टॅप करा. WhatsApp मध्ये YOJANA आधीच लिहिलेले असेल — फक्त पाठवा.',
+    whatsappQrButton: 'WhatsApp उघडा ↗',
     skip: 'मुख्य मजकुराकडे जा', language: 'वेबसाइटची भाषा',
     navHow: 'कसे काम करते', navFeatures: 'सुविधा', navFaq: 'नेहमीचे प्रश्न', openApp: 'अॅप उघडा',
     eyebrow: 'लोकांसाठी बनवलेले. माहितीवर आधारित.',
