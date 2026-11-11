@@ -19,15 +19,24 @@ class OpenAIProvider(ProviderBase):
     provider = "openai"
 
     def __init__(self, model: str, role: str = "default", client=None,
-                 base_url: str | None = None, api_key: str | None = None):
+                 base_url: str | None = None, api_key: str | None = None,
+                 timeout: float | None = None, fast: bool = False):
         super().__init__(model, role)
         base_url = base_url or os.getenv("OPENAI_BASE_URL") or None
         self.compatible = base_url is not None
         if client is None:
             # local servers such as Ollama need no key, but the SDK insists on one
             api_key = api_key or os.getenv("OPENAI_API_KEY") or ("not-needed" if base_url else None)
-            client = OpenAI(api_key=api_key, base_url=base_url,
-                            timeout=float(os.getenv('LLM_TIMEOUT_SECONDS', '30')), max_retries=0)
+            # Always a bounded wait. llm/config passes each role's timeout (ROLE_TIMEOUTS); a client
+            # built without one uses LLM_TIMEOUT_SECONDS (default 30). When a person is waiting
+            # (fast, or no role timeout), no SDK retry: on a 429 the SDK would sleep for the
+            # retry-after header (measured: 23 s on Groq) before the fallback chain could move on.
+            # Background roles keep one SDK retry.
+            if timeout:
+                extra = {"timeout": timeout, "max_retries": 0 if fast else 1}
+            else:
+                extra = {"timeout": float(os.getenv("LLM_TIMEOUT_SECONDS", "30")), "max_retries": 0}
+            client = OpenAI(api_key=api_key, base_url=base_url, **extra)
         self.client = client
 
     def _call(self, messages, system, json_mode, temperature, max_tokens) -> RawResult:

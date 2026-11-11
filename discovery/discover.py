@@ -23,7 +23,7 @@ from llm import LLMClient, LLMError, get_llm
 from store import db
 
 from .catalog import load_catalog, norm_name, save_discovered
-from .search import SearchError, SearchProvider, get_search
+from .search import NoSearch, SearchError, SearchProvider, get_search
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -47,14 +47,26 @@ class DiscoveryReport:
     updated_schemes: list[str] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)
     mentioned: list[str] = field(default_factory=list)
+    rules_flagged: int = 0                     # rules whose quote did not mention their field
+    rules_dropped: int = 0                     # of those, moved to "check yourself" by the Verifier
+    not_for_people: int = 0                    # village / institution programmes not saved
 
 
 class Discoverer:
     def __init__(self, llm: LLMClient | None = None, search: SearchProvider | None = None,
                  fetcher: Fetcher | None = None, db_path: Path | None = None,
-                 log: Callable[[str], None] = lambda m: None):
-        self.llm = llm or get_llm("extractor")
-        self.search = search or get_search()
+                 log: Callable[[str], None] = lambda m: None, verifier: LLMClient | None = None,
+                 lane: str = "batch"):
+        from llm import shared_llm
+        self.llm = llm or shared_llm("extractor")
+        self.verifier = verifier                # None: the verifier role's shared client, when needed
+        self.lane = lane                        # budget lane the agents spend from: gap | batch
+        if search is None:
+            try:
+                search = get_search()
+            except SearchError as e:       # no key: page reading still works, searches say why not
+                search = NoSearch(str(e))
+        self.search = search
         self.fetcher = fetcher or Fetcher()
         self.db_path = db_path
         self.log = log
@@ -118,16 +130,27 @@ class Discoverer:
             self._remember(url, "fetch_error", note=str(e))
             return None
         report.pages_fetched += 1
-        try:
-            res = extract_scheme(page, self.llm)
-        except LLMError as e:
-            report.skipped.append((url, f"extraction failed: {e}"))
+        from agents.extractor import EXTRACTOR, benefits_a_person
+        from agents.runner import run_agent
+        from agents.verifier import review
+        out = run_agent(EXTRACTOR, page, llm=self.llm, lane=self.lane)
+        if not out.ok:
+            report.skipped.append((url, f"extraction failed: {out.error}"))
             return None                                        # not remembered: retry next time
+        res = out.data
         report.mentioned.extend(res.mentioned_schemes)
         if res.scheme is None:
             report.skipped.append((url, res.error or "no scheme"))
             self._remember(url, "not_scheme", note=res.error or "")
             return None
+        if not benefits_a_person(res.scheme):
+            report.not_for_people += 1
+            report.skipped.append((url, "benefits a village or institution, not a person"))
+            self._remember(url, "not_scheme", note="benefits a village or institution, not a person")
+            return None
+        checked = review(res.scheme, llm=self.verifier, lane=self.lane)
+        report.rules_flagged += checked["flagged"]
+        report.rules_dropped += checked["dropped"]
         meta = dict(extra if extra is not None else meta_for_url(page.final_url))
         if meta.get("district"):
             # A Zilla Parishad site carries both its own schemes and state/central ones. Only the

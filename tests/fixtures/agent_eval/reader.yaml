@@ -1,0 +1,51 @@
+# Reader agent gold set: one citizen message -> the facts it clearly states (and its language).
+# Only facts stated plainly are listed; the agent may extract more (counted as "extra", not wrong).
+# District values are fields.yaml keys (lowercase, aliases resolved: Ahilyanagar -> ahmednagar).
+
+- text: "I am a 34 year old man from Mysuru district in Karnataka. I work as a construction worker. I am OBC and my family earns about 1.5 lakh a year."
+  language: en
+  facts: {age: 34, gender: male, state: karnataka, district: mysuru, occupation: construction_worker, social_category: obc, annual_family_income_inr: 150000}
+
+- text: "मी 45 वर्षांची विधवा आहे, बीड जिल्ह्यात राहते. मी शेतमजूर आहे, अनुसूचित जातीची आहे आणि आमचे वार्षिक उत्पन्न 40 हजार आहे."
+  language: mr
+  facts: {age: 45, gender: female, marital_status: widowed, district: beed, occupation: agricultural_labourer, social_category: sc, annual_family_income_inr: 40000}
+
+- text: "मेरी उम्र 62 है, 2 एकड़ ज़मीन है, BPL कार्ड है"
+  language: hi
+  facts: {age: 62, owns_cultivable_land: true, is_bpl: true}
+
+- text: "मैं 19 साल की छात्रा हूँ, पुणे में रहती हूँ, ओबीसी"
+  language: hi
+  facts: {age: 19, gender: female, is_student: true, district: pune, social_category: obc}
+
+- text: "I'm a farmer in Nashik with 3 acres of land, age 50, general category"
+  language: en
+  facts: {occupation: farmer, district: nashik, age: 50, social_category: general, owns_cultivable_land: true}
+
+- text: "मी 28 वर्षांचा आहे, कोल्हापूरला राहतो, बेरोजगार आहे"
+  language: mr
+  facts: {age: 28, gender: male, district: kolhapur, occupation: unemployed}
+
+- text: "हम परिवार में 5 लोग हैं, महीने के 8 हज़ार कमाते हैं, उत्तर प्रदेश के गोरखपुर से हैं"
+  language: hi
+  facts: {family_size: 5, annual_family_income_inr: 96000, state: uttar_pradesh, district: gorakhpur}
+
+- text: "I have 60% disability, I am 40 years old and live in Tamil Nadu"
+  language: en
+  facts: {disability_percent: 60, age: 40, state: tamil_nadu}
+
+- text: "आमच्याकडे पक्के घर नाही, मी गर्भवती आहे, वय 24"
+  language: mr
+  facts: {owns_pucca_house: false, is_pregnant_or_lactating: true, age: 24}
+
+- text: "fisherman from Ratnagiri, 45, ST"
+  language: en
+  facts: {occupation: fisher, district: ratnagiri, age: 45, social_category: st}
+
+- text: "मैं विधवा हूँ, मेरी दो बेटियाँ हैं, उम्र 38, राजस्थान में रहती हूँ"
+  language: hi
+  facts: {marital_status: widowed, num_children: 2, age: 38, state: rajasthan}
+
+- text: "मी अहिल्यानगर जिल्ह्यात राहते, वय 55, शेती करते, आमची 2 एकर शेती आहे"
+  language: mr
+  facts: {district: ahmednagar, age: 55, occupation: farmer, owns_cultivable_land: true}

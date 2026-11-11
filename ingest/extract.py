@@ -55,6 +55,7 @@ EXTRACT_SCHEMA = {
         "ministry": {"type": ["string", "null"]},
         "benefit_summary": {"type": ["string", "null"]},
         "benefit_annual_inr": {"type": ["number", "null"]},
+        "benefit_recipient": {"enum": ["person", "family", "village", "institution", "group", "unknown", None]},
         "value_score": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
         "effort": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
         "all_rules": {"type": "array", "items": RULE},
@@ -88,6 +89,10 @@ Rules you must follow:
   appears on a district website is false. If unsure, false.
 - benefit_annual_inr: yearly cash value in rupees if stated, else null. value_score 1-5 (how much it helps
   a poor family), effort 1-5 (how hard to apply). documents: names of documents required.
+- benefit_recipient: who receives the benefit. person or family (an individual or household applies),
+  village (gram panchayat or village works), institution (school, hospital, NGO, cooperative, office),
+  group (self-help group, society), or unknown. Village and institution programmes are not
+  schemes a person can apply for.
 - Never decide whether any person is eligible. Only extract what the page says.
 
 Profile fields:
@@ -127,8 +132,133 @@ def quote_found(quote: str, norm_text: str) -> bool:
 
 
 def slugify(text: str) -> str:
+    if re.search(r"[ऀ-ॿ]", text or ""):           # Marathi/Hindi names: transliterate, don't drop
+        from core.name_match import devanagari_to_latin
+        text = devanagari_to_latin(text)
     s = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
     return s[:60].strip("_")
+
+
+# ---------- field-quote consistency (code check before the Verifier agent) ----------
+# A rule passes the quote check when its sentence is on the page, but the sentence may not say what
+# the rule claims ("Residing within the Kerala State" -> residence = rural). A rule whose quote
+# mentions none of its field's words is flagged for the Verifier agent. Matching is on whole words
+# for short Latin words (so "sc" does not match "scheme") and on substrings otherwise.
+QUOTE_WORDS: dict[str, list[str]] = {
+    "age": ["age", "aged", "year", "years", "yrs", "old", "senior", "वय", "वर्ष", "साल", "आयु", "उम्र"],
+    "gender": ["woman", "women", "female", "girl", "girls", "widow", "mother", "male", "man", "men", "boy",
+               "transgender", "महिला", "स्त्री", "मुलगी", "पुरुष", "बालिका", "विधवा", "माता", "कन्या"],
+    "marital_status": ["widow", "married", "unmarried", "divorc", "separated", "abandoned", "deserted",
+                       "spinster", "single", "विधवा", "विवाहित", "अविवाहित", "परित्यक्ता", "घटस्फोट", "तलाक"],
+    "social_category": ["sc", "st", "obc", "ews", "scheduled", "caste", "tribe", "tribal", "backward", "economically",
+                        "general", "open", "vjnt", "nt", "sbc", "dalit", "adivasi", "अनुसूचित", "जाती", "जमाती",
+                        "मागास", "ओबीसी", "आदिवासी"],
+    "is_minority": ["minority", "minorities", "muslim", "christian", "sikh", "buddhist", "jain", "parsi",
+                    "अल्पसंख्याक", "अल्पसंख्यक"],
+    "disability_percent": ["disab", "divyang", "handicap", "percent", "%", "दिव्यांग", "अपंग", "विकलांग"],
+    "is_ex_serviceman": ["ex-service", "ex service", "armed forces", "army", "defence", "soldier", "सैनिक", "माजी"],
+    "is_pregnant_or_lactating": ["pregnan", "lactat", "mother", "matern", "delivery", "गर्भवती", "स्तनदा", "प्रसूती"],
+    "residence": ["rural", "urban", "village", "town", "city", "gram", "nagar", "municipal", "ग्रामीण", "शहरी",
+                  "गाव", "गांव", "शहर", "नगर"],
+    "annual_family_income_inr": ["income", "earning", "salary", "rs", "rupee", "₹", "lakh", "उत्पन्न", "आय", "उत्पन्"],
+    "is_bpl": ["bpl", "below poverty", "poverty line", "antyodaya", "दारिद्र्य", "गरीबी रेखा", "बीपीएल"],
+    "ration_card_type": ["ration", "antyodaya", "priority", "bpl", "apl", "शिधा", "राशन", "रेशन"],
+    "has_bank_account": ["bank", "account", "बँक", "बैंक", "खाते", "खाता"],
+    "family_monthly_pension_inr": ["pension", "पेन्शन", "पेंशन", "निवृत्ती"],
+    "occupation": ["farmer", "farm", "labour", "labor", "worker", "vendor", "artisan", "fisher", "weaver", "domestic",
+                   "self-employ", "self employ", "student", "unemploy", "homemaker", "housewife", "retired",
+                   "employee", "cultivat", "agricultur", "शेतकरी", "शेतमजूर", "मजूर", "कामगार", "विद्यार्थी",
+                   "मच्छीमार", "किसान", "मज़दूर", "विणकर", "कारागीर"],
+    "is_construction_worker_registered": ["construction", "building", "board", "registered", "बांधकाम", "निर्माण"],
+    "has_eshram_card": ["e-shram", "eshram", "shram", "unorganised", "unorganized", "श्रम"],
+    "is_student": ["student", "study", "studying", "school", "college", "class", "std", "course", "admission",
+                   "विद्यार्थी", "शिक्षण", "शाळा", "महाविद्यालय", "इयत्ता", "छात्र"],
+    "current_study_level": ["class", "std", "standard", "school", "college", "degree", "diploma", "iti", "graduate",
+                            "post", "phd", "इयत्ता", "पदवी", "महाविद्यालय"],
+    "highest_education": ["pass", "passed", "class", "std", "degree", "diploma", "iti", "graduate", "education",
+                          "literate", "उत्तीर्ण", "शिक्षण", "पदवी"],
+    "family_size": ["family", "member", "members", "household", "कुटुंब", "परिवार", "सदस्य"],
+    "num_children": ["child", "children", "son", "sons", "daughter", "daughters", "kid", "मुल", "बच्च", "अपत्य"],
+    "has_girl_child_under_10": ["girl", "daughter", "मुलगी", "बालिका", "कन्या", "बेटी"],
+    "owns_cultivable_land": ["land", "acre", "hectare", "holding", "cultivable", "farm", "जमीन", "शेत", "एकर", "हेक्टर"],
+    "land_owned_before_2019_02_01": ["land", "2019", "holding", "जमीन"],
+    "land_acres": ["acre", "hectare", "land", "एकर", "हेक्टर", "जमीन"],
+    "is_institutional_landholder": ["institution", "land", "संस्था"],
+    "owns_pucca_house": ["house", "pucca", "kutcha", "home", "dwelling", "roof", "घर", "पक्के", "कच्चे"],
+    "family_income_tax_payer": ["tax", "कर"],
+    "family_constitutional_or_elected_post": ["elected", "minister", "mla", "mp", "member of", "mayor", "constitutional",
+                                              "निर्वाचित", "आमदार", "खासदार"],
+    "family_govt_employee_excluded": ["government", "govt", "employee", "service", "सरकारी", "कर्मचारी"],
+    "family_registered_professional": ["doctor", "engineer", "lawyer", "advocate", "chartered", "architect",
+                                       "professional", "डॉक्टर", "वकील"],
+    "family_member_already_receiving": ["receiv", "already", "other", "another", "benefit", "pension", "लाभ", "इतर"],
+    "in_pmjay_beneficiary_list": ["secc", "pmjay", "ayushman", "beneficiary list", "आयुष्मान"],
+}
+_LATIN_WORD = re.compile(r"^[a-z0-9]+$")
+
+
+def _mentions(quote: str, words: list[str]) -> bool:
+    q = quote.lower()
+    for w in words:
+        if len(w) <= 4 and _LATIN_WORD.match(w):
+            if re.search(rf"\b{re.escape(w)}\b", q):
+                return True
+        elif w in q:
+            return True
+    return False
+
+
+def rule_needs_review(rule: dict) -> str | None:
+    """Why a rule's quote may not support it, or None when its quote mentions the field."""
+    name, quote = rule.get("field", ""), rule.get("source_quote") or ""
+    if name in ("state", "district"):
+        place = str(rule.get("value") or "").replace("_", " ")
+        words = [place, "state", "district", "resident", "domicile", "राज्य", "जिल्हा", "रहिवासी", "निवासी"]
+    else:
+        words = QUOTE_WORDS.get(name)
+        if words is None:
+            return f"no word check for field {name}"
+    if not _mentions(quote, [w for w in words if w]):
+        return f"quote does not mention {name.replace('_', ' ')}"
+    return None
+
+
+def flagged_rules(scheme: dict) -> list[dict]:
+    """Rules to send to the Verifier: [{block, index, field, op, value, quote, why}]."""
+    out = []
+    for block in ("all", "any"):
+        for i, r in enumerate(scheme["eligibility"].get(block) or []):
+            why = rule_needs_review(r)
+            if why:
+                out.append({"block": block, "index": i, "field": r["field"], "op": r["op"], "value": r["value"],
+                            "quote": r.get("source_quote", ""), "why": why})
+    return out
+
+
+def drop_unsupported(scheme: dict, unsupported: list[dict]) -> int:
+    """Move rules the Verifier did not support out of the eligibility rules, into unmapped criteria
+    (the safe direction: a person checks them, they never silently exclude anyone). Losing one
+    alternative of an `any` block drops the whole block, as in extraction."""
+    if not unsupported:
+        return 0
+    elig = scheme["eligibility"]
+    gone = {(u["block"], u["index"]) for u in unsupported}
+    notes = list(scheme.get("unmapped_criteria") or [])
+    for block in ("all", "any"):
+        rules = elig.get(block) or []
+        whole_block = block == "any" and any(b == "any" for b, _ in gone)
+        kept = []
+        for i, r in enumerate(rules):
+            if whole_block or (block, i) in gone:
+                notes.append(_norm(r.get("reason") or r.get("source_quote") or "")[:200] or r["field"])
+            else:
+                kept.append(r)
+        elig[block] = kept
+    if "any" in elig and not elig["any"]:
+        elig.pop("any")
+    notes.append(DROPPED_NOTE)
+    scheme["unmapped_criteria"] = list(dict.fromkeys(n for n in notes if n))
+    return len(gone)
 
 
 def normalise_state(raw: str | None) -> str | None:
@@ -272,6 +402,8 @@ def build_scheme(data: dict, page: Page, model: str) -> ExtractResult:
         "content_hash": page.content_hash,
         "benefit_summary": data.get("benefit_summary") or "",
         "benefit_annual_inr": int(benefit) if isinstance(benefit, (int, float)) and benefit > 0 else 0,
+        **({"benefit_recipient": data["benefit_recipient"]}
+           if data.get("benefit_recipient") not in (None, "unknown") else {}),
         "rank": {"value_score": data.get("value_score") or 3, "effort": data.get("effort") or 3},
         "eligibility": {"all": all_rules, **({"any": any_rules} if any_rules else {})},
         "unmapped_criteria": list(dict.fromkeys(u for u in unmapped if u)),

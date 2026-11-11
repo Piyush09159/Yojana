@@ -1,0 +1,47 @@
+# Known districts per state (fields.yaml keys), with former/alternate names. Used by
+# core/fields.py to resolve a district a person or model spelled differently ("Bhid" -> beed).
+# Generated from ingest/sources_<state>.yaml; the full all-India list (about 780 districts, with
+# official LGD codes) replaces this when imported. A district not listed is kept as given.
+maharashtra:
+  ahmednagar:
+  - ahilyanagar
+  akola: []
+  amravati: []
+  aurangabad:
+  - chhatrapati_sambhajinagar
+  - sambhajinagar
+  beed: []
+  bhandara: []
+  buldhana: []
+  chandrapur: []
+  dhule: []
+  gadchiroli: []
+  gondia: []
+  hingoli: []
+  jalgaon: []
+  jalna: []
+  kolhapur: []
+  latur: []
+  mumbai_city:
+  - mumbaicity
+  mumbai_suburban:
+  - mumbaisuburban
+  nagpur: []
+  nanded: []
+  nandurbar: []
+  nashik: []
+  osmanabad:
+  - dharashiv
+  palghar: []
+  parbhani: []
+  pune: []
+  raigad: []
+  ratnagiri: []
+  sangli: []
+  satara: []
+  sindhudurg: []
+  solapur: []
+  thane: []
+  wardha: []
+  washim: []
+  yavatmal: []
