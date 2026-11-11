@@ -10,13 +10,13 @@ This file is the project's history, newest entry first. Read it top to bottom to
 
 | | |
 |---|---|
-| Version | v2.4 PostgreSQL store, live on Neon |
+| Version | v2.5 agent orchestration (5 agents, one orchestrator, job lanes) |
 | Last updated | 2026-11-11 |
-| Tests | 260 passed, 9 skipped (opt-in Postgres tests: 9/9 pass on Neon `yojana_test`), 0 failed |
-| Phase | Public landing page, citizen dashboard, conversational API, Rescue and WAHA adapter; audited repository consolidation |
-| Schemes | 270 in Neon (267 imported + 3 from the queue); 523 pages queued |
-| Eval | eligibility 36/36 on 12 personas; start-with 12/12; name matcher P=1.00 R=1.00 on 20 pairs (small self-labelled sets) |
-| Next task | Run `python -m store pg-init` + `pg-import` + `scripts/check_pg_parity.py` once DATABASE_URL is set; benchmark local Ollama models for extraction |
+| Tests | 314 passed, 9 skipped offline (no network); 9/9 Postgres tests pass on Neon `yojana_test` |
+| Phase | Postgres store live on Neon; one orchestrator for WhatsApp, /app and terminal; gap and batch lanes |
+| Schemes | 270 in Neon; 523 pages queued |
+| Eval | engine 36/36, 12/12; Reader agent 52/53 facts (98%), language 12/12; Verifier 5/5 caught, 0/3 wrongly dropped |
+| Next task | Move /legacy onto the orchestrator; translate ranking reasons; drain the 523-page queue with `python -m worker --batch` |
 
 ---
 
@@ -41,6 +41,51 @@ This file is the project's history, newest entry first. Read it top to bottom to
 
 **Next:** the next concrete step
 ```
+
+---
+
+## v2.5: 2026-11-11: agent orchestration
+**Who:** Claude (claude-opus-5-5) with Kshitij
+**Goal:** the team's last task before deployment: a smooth flow with few failures, each agent doing one job well, clear hand-offs, the right number of agents, cheap database updates.
+
+**Before:** 8 model jobs on 4 roles, wired three ways (`web/conversation_api.py`, `web/session.py` + `saathi/investigator.py`, `saathi/chat.py`). No timeouts (Gemini took 78.5 s on one message). A new LLM client per WhatsApp message, so fallback cooldowns were forgotten. One role ("extractor") for both fast message reading and slow page reading. Exceptions ended turns. The WhatsApp reply never contained schemes. No web fallback or budgets in the user path.
+
+**Changed**
+- `agents/` (new): five agents, each one job + JSON contract + code check: Reader, Replier, Scout (replaces brainstorm + investigator analyse), Extractor, Verifier (the unused judge role). `agents/runner.run_agent` is the only place agents run and never raises: cache (hash key), lane budget, shared client, validate, deterministic degrade, token record.
+- `llm/config.py`: roles `reader`, `scout`, `verifier`, each falling back to extractor/planner/judge settings; per-role timeouts (`ROLE_TIMEOUTS`, `<ROLE>_TIMEOUT`); `FAST_ROLES` (reader, agent); `shared_llm(role)` one client per role per process.
+- `llm/providers/*`: timeouts on every provider; fast roles: Gemini thinking LOW and no SDK retry (a 429 made the SDK sleep 23 s); local models +15 s to load.
+- `llm/fallback.py`: third failure class "slow" (timeout, 504, deadline): move on at once, rest the provider 5 min. A 504 used to stop the chain. Fast roles do not wait on busy providers (`busy_tries=1`).
+- `saathi/orchestrator.py` (new): one state machine for every entry point; `short_answer.py` (yes/no/number/choice in en/hi/mr read by code; "no" -> 0 for count questions); `reply.py` (questions, top-5, details, follow-ups as code templates, translated options); `sufficiency.py` (good match = status + quality >= 30 + match >= 2; segment key); `guard.py`; `senders.py`. Loop guard: a question unanswered twice is skipped; absurd questions filtered (student at 30+, pregnancy outside 15-45 or for men).
+- `web/conversation_api.py`: thin adapter; conversations persist in the database (7 days). `web/waha_bridge.py`: calls the orchestrator with a stable hashed conversation id; **the reply now includes the schemes**; chat id kept for follow-ups.
+- `worker/` (new): `python -m worker [--once|--batch N|--status|--retry-failed]`; jobs gapfill -> extract -> notify; leases, retries (1/2/4 min), failed state kept.
+- `store/runtime.py` + `store/sql/002_agents.sql`: job queue (SKIP LOCKED), conversations, agent cache, daily budget, segment searches, coverage log; same API on SQLite; reconnect on dropped Postgres connections (Neon closes idle ones).
+- `ingest/extract.py`: `benefit_recipient` in the extraction schema (village/institution programmes not saved); field-quote check (`QUOTE_WORDS`, `rule_needs_review`, `flagged_rules`, `drop_unsupported`); Devanagari names transliterated for ids.
+- `discovery/discover.py`: Extractor and Verifier run through the runner; reports flagged/dropped/not-for-people.
+- `core/fields.py` + `schemes/geo/districts.yaml`: districts resolved by key, alias, Devanagari transliteration or sound ("bhid" -> beed, "अहिल्यानगर" -> ahmednagar).
+- `saathi/__main__.py`: `python -m saathi [--worker] [--debug]` runs on the orchestrator; `--classic` keeps the old loop.
+- `agents/eval.py` + `tests/fixtures/agent_eval/`: `python -m agents.eval --live [--pace S]`, Reader (12 messages) and Verifier (8 rules) gold sets.
+- Tests: `tests/test_orchestration.py` (54); `tests/conftest.py` defaults every role to the mock provider and no search, so no test can reach a real model (a leak to Gemini was caught by the network-blocked run and closed); two conversation tests now inject a mock Reader instead of patching removed internals.
+- Docs: `docs/AGENT_ORCHESTRATION.md` (new), README section, CLAUDE.md layout and commands, `.env.example` agent settings.
+
+**Measured**
+- Live, Karnataka worker: 1 Reader call (2,588 tokens, 3.3 s on Groq) for 7 turns; 6 answers by code; gap-fill ran (Scout + 2 searches, 9 s).
+- Offline on the real catalog, Beed SC widow: 1 Reader call for the whole conversation; top result Indira Gandhi National Widow Pension; atrocity-victim scheme gone.
+- Reader eval paced: 52/53 (98%), language 12/12. Unpaced burst: Groq 429 after 4 calls exposed the SDK sleep, missing 504 handling and a too-short local timeout; all fixed.
+- Verifier eval: 5/5 caught, 0/3 wrongly dropped (after adding implied-applicant examples to the prompt; before: 2/3 wrongly dropped).
+- Batch lane: ZP Jalgaon village-fund page rejected as not for a person (qwen saved such pages earlier).
+- **Web search finding:** Google via SerpAPI ignores `site:gov.in OR site:nic.in`, a single `site:gov.in` and `as_sitesearch` (0-2 official results in 10; 3 test searches). Gap-fill now asks for 30 results per paid search and keeps only official ones.
+
+**Tests:** 314 passed, 9 skipped (opt-in Postgres; 9/9 pass on Neon), 0 failed; network-blocked run: no attempts.
+**Eval:** as above.
+
+**Known issues / not done**
+- `/legacy` (`web/session.py` + investigator) still runs its own flow; not yet on the orchestrator.
+- Ranking reasons ("you meet 3 of its conditions") are English only.
+- Fisheries/poultry schemes still reach some top 5s: their stored rules genuinely match; needs re-extraction with the Verifier.
+- Live web search yields few official pages (above). Per-state source maps remain the better source.
+- 3 village-fund records saved by the earlier qwen run remain in Neon; 1 batch job failed from before the fixes (`--retry-failed`).
+
+**Next:** move /legacy onto the orchestrator; drain the queue with `python -m worker --batch`; re-extract low-quality schemes through the Verifier.
 
 ---
 

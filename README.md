@@ -133,6 +133,28 @@ for ten minutes).
 
 ## How it works
 
+### Agent orchestration (one flow for WhatsApp, /app and the terminal)
+
+Code runs the conversation; five narrow agents do only what code cannot. Agents never call each
+other and never decide eligibility. Full explanation: [docs/AGENT_ORCHESTRATION.md](docs/AGENT_ORCHESTRATION.md).
+
+| Agent | One job | Lane |
+|---|---|---|
+| Reader (`agents/reader.py`) | citizen message -> facts + intent (only when code cannot read the reply) | real-time |
+| Replier (`agents/replier.py`) | free question -> answer from the engine's JSON, links checked | real-time |
+| Scout (`agents/scout.py`) | profile group -> needs + scheme names to look up (once a week per group) | gap |
+| Extractor (`agents/extractor.py`) | official page -> rules with source quotes; village/institution pages rejected | gap, batch |
+| Verifier (`agents/verifier.py`) | second opinion on rules whose quote does not mention their field | gap, batch |
+
+```bash
+python -m saathi --worker --debug      # chat in the terminal; background jobs run after each turn
+python -m worker                       # background lanes: gap-fill, page reading, follow-ups
+python -m worker --batch 20            # batch lane: read 20 pages from the crawl queue
+python -m worker --status              # jobs and today's spend per lane
+python -m agents.eval --live --pace 15 # each agent against its hand-labelled set (uses tokens)
+```
+
+
 ### Main citizen workspace (`/app`)
 
 A free-text message goes to `/api/v2/conversation`, profile facts are validated, deterministic rules generate a shortlist, and relevant missing eligibility facts drive follow-up questions. Scheme cards show sources and verification warnings. Rescue Mode calls the separate deterministic preflight and status-interpretation APIs.

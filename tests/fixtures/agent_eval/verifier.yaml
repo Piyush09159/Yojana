@@ -1,0 +1,21 @@
+# Verifier agent gold set: rules the code check flags (their quote mentions none of the field's
+# words), labelled by hand. supported: false = the sentence does not state this condition about the
+# applicant (the rule must be dropped); true = it does, in other words (the rule must be kept).
+# The first four are real extractions from 2026-11-11 (Kerala old-age pension, ZP Jalgaon).
+
+- {field: residence, op: eq, value: rural, supported: false,
+   quote: "Residing within the Kerala State for a continuous period of not less than three years."}
+- {field: is_bpl, op: eq, value: true, supported: false,
+   quote: "No person shall be eligible for the pension, if he/she is in receipt of any other Social Welfare pension."}
+- {field: family_size, op: gte, value: 1, supported: false,
+   quote: "Applicant must be a destitute."}
+- {field: occupation, op: eq, value: farmer, supported: false,
+   quote: "कर्जाची रक्कम 60,000/- रूपयाहूनअधिक असेल तर, त्याबाबतीत कर्ज देण्यास जिल्हा परिषद मान्यता देईल."}
+- {field: gender, op: eq, value: female, supported: false,
+   quote: "Financial assistance will be given for the marriage of daughters of registered beneficiaries."}
+- {field: gender, op: eq, value: female, supported: true,
+   quote: "Only Lady Health Visitors and ASHAs who are serving in the district can apply."}
+- {field: marital_status, op: eq, value: widowed, supported: true,
+   quote: "The scheme is meant for women whose husbands have died and who have no other support."}
+- {field: is_student, op: eq, value: true, supported: true,
+   quote: "Pupils enrolled in Government ashram shalas get free uniforms and books."}

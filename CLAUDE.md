@@ -106,6 +106,13 @@ scheme_saathi/
   web/                 FastAPI app (app.py, session.py) + static/ page (python -m web, http://localhost:8000)
   ingest/sources_mh.yaml, source_map.py, crawl.py   Maharashtra agency/ZP source map, probe, site crawler
   core/awareness.py, schemes/flagship.yaml          awareness high/medium/low for "lesser-known" results
+  agents/              the five agents (reader, replier, scout, extractor, verifier) + runner.py:
+                       run_agent() never raises (cache, budget, shared client, validate, degrade)
+  saathi/orchestrator.py  the one conversation state machine (WhatsApp, /app, terminal);
+                       short_answer.py (code reads short replies), reply.py (en/hi/mr templates),
+                       sufficiency.py (good match, segment), guard.py, senders.py
+  worker/              job lanes: gapfill -> extract -> notify (store/runtime.py job queue)
+  docs/AGENT_ORCHESTRATION.md  how the agents work together (read before changing agents)
   scripts/llm_smoke.py live check of configured providers (uses the network)
   eval.py              prints accuracy numbers
   demo.py              interactive terminal demo (no LLM)
@@ -326,6 +333,9 @@ python -m store migrate | export | stats | verify <id>   # database: import, dum
 python -m store pg-init | pg-import | quality            # PostgreSQL (DATABASE_URL): schema, copy, report
 python scripts/check_pg_parity.py                        # Postgres answers == SQLite answers
 python scripts/try_flow.py [--web N] [--update N] "<msg>" # live: one message through every step
+python -m saathi [--worker] [--debug]                   # live: chat through the orchestrator
+python -m worker [--once|--batch N|--status]            # live: background agent lanes
+python -m agents.eval --live [--pace S] [reader|verifier] # live: score each agent on its gold set
 python scripts/bench_llm.py [provider:model ...]   # compare models (uses tokens)
 .\start.ps1 [-NoWeb|-Update|-Stats|-Test|-Debug]   # Windows launcher (start.bat = double-click)
 ```

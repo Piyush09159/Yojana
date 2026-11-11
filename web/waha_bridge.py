@@ -111,7 +111,13 @@ def receive_waha(webhook_secret: str, body: WAHAEvent):
     if old is None:
         return {"status": "not_opted_in"}  # never unsolicited reply
     try:
-        result = conversation(Message(text=message, lang="en", session_id=old or None))
+        # one stable conversation per chat, keyed by a hash of the chat id; the chat id itself is
+        # kept in the conversation state only so the gap lane can send a follow-up
+        from store.runtime import key_of
+        from .conversation_api import orchestrator
+        turn = orchestrator().handle(key_of("waha", chat_id), message, "en",
+                                     reply_to={"channel": "waha", "chat_id": chat_id})
+        result = {"session_id": turn.chat_ref, "message": turn.reply}
     except HTTPException as exc:
         if exc.status_code == 404:  # expired in-memory session: restart on next message
             with _guard:

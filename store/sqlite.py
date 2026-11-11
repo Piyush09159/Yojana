@@ -60,6 +60,35 @@ CREATE TABLE IF NOT EXISTS crawl_urls (
     at          TEXT
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+
+-- agent orchestration state; same columns as store/sql/002_agents.sql (times are Unix seconds)
+CREATE TABLE IF NOT EXISTS job (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, dedupe_key TEXT,
+    payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'queued',
+    attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,
+    run_after REAL NOT NULL, lease_until REAL, result TEXT, error TEXT,
+    created_at REAL NOT NULL, finished_at REAL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS job_active_key ON job (dedupe_key) WHERE status IN ('queued', 'running');
+CREATE TABLE IF NOT EXISTS conversation (
+    chat_ref TEXT PRIMARY KEY, state TEXT NOT NULL, updated_at REAL NOT NULL, expires_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS segment_search (
+    segment_key TEXT PRIMARY KEY, last_searched REAL NOT NULL, found_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS agent_cache (
+    agent TEXT NOT NULL, key TEXT NOT NULL, output TEXT NOT NULL, created_at REAL NOT NULL,
+    PRIMARY KEY (agent, key)
+);
+CREATE TABLE IF NOT EXISTS coverage_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, segment_key TEXT NOT NULL, dims TEXT NOT NULL,
+    db_good_count INTEGER NOT NULL, web_triggered INTEGER NOT NULL DEFAULT 0,
+    web_new_count INTEGER NOT NULL DEFAULT 0, at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+);
+CREATE TABLE IF NOT EXISTS agent_budget (
+    day TEXT NOT NULL, lane TEXT NOT NULL, provider TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,
+    tokens INTEGER NOT NULL DEFAULT 0, searches INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, lane, provider)
+);
 """
 
 _local = threading.local()

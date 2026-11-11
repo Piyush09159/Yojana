@@ -1,5 +1,4 @@
 """Dashboard routing and real API integration regression coverage."""
-from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from web.app import create_app
 from web import conversation_api
@@ -78,9 +77,11 @@ def test_dashboard_catalog_rescue_and_waha_routes():
 
 
 def test_dashboard_conversation_roundtrip(monkeypatch):
-    monkeypatch.setattr(conversation_api, 'get_llm', lambda _: object())
-    monkeypatch.setattr(conversation_api, 'understand', lambda *_: SimpleNamespace(
-        facts={'age': 60, 'state': 'maharashtra'}, language='en', intent='give_info'))
+    from llm.providers.mock_provider import MockProvider
+    from saathi.orchestrator import Orchestrator
+    reader = MockProvider(responses={"Person's message": {
+        "language": "en", "facts": {"age": 60, "state": "maharashtra"}, "intent": "give_info", "scheme_name": None}})
+    monkeypatch.setattr(conversation_api, "_orchestrator", Orchestrator(reader_llm=reader, enqueue_gaps=False))
     client = TestClient(create_app())
     r = client.post('/api/v2/conversation', json={'text': 'I am 60 in Maharashtra', 'lang': 'en'})
     assert r.status_code == 200

@@ -18,10 +18,12 @@ THINKING_HEADROOM = 8000
 class AnthropicProvider(ProviderBase):
     provider = "anthropic"
 
-    def __init__(self, model: str, role: str = "default", client=None):
+    def __init__(self, model: str, role: str = "default", client=None,
+                 timeout: float | None = None, fast: bool = False):
         super().__init__(model, role)
         # with no ANTHROPIC_API_KEY the SDK falls back to an `ant auth login` profile
-        self.client = client or anthropic.Anthropic()
+        self.client = client or anthropic.Anthropic(
+            **({"timeout": timeout, "max_retries": 0 if fast else 1} if timeout else {}))
         self.effort = os.getenv("ANTHROPIC_EFFORT") or None   # low | medium | high | xhigh | max
         self.use_fallbacks = model in FALLBACK_MODELS and not os.getenv("ANTHROPIC_BASE_URL")
 
