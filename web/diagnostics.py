@@ -24,7 +24,9 @@ if not log.handlers:
     log.propagate = False
 
 SAFE_KEYS = {'event', 'stage', 'status', 'detail', 'mimetype', 'bytes', 'seconds', 'ms', 'language',
-             'source', 'result', 'enabled', 'configured', 'missing', 'engine_has_body'}
+             'source', 'result', 'enabled', 'configured', 'missing', 'engine_has_body',
+             # WAHA_MEDIA_UNTRUSTED: which check failed + categorical facts (never the URL/host/file)
+             'check', 'scheme', 'origin_kind', 'host_match', 'port_match'}
 ERRORS = {'WAHA_MEDIA_UNAVAILABLE', 'WAHA_MEDIA_UNSUPPORTED', 'WAHA_MEDIA_UNTRUSTED',
           'WAHA_MEDIA_DOWNLOAD_FAILED', 'WAHA_AUDIO_DECODE_FAILED', 'VOICE_TOO_LONG',
           'SARVAM_STT_DISABLED', 'SARVAM_STT_FAILED', 'VOICE_BUSY', 'VOICE_CONVERSATION_FAILED',

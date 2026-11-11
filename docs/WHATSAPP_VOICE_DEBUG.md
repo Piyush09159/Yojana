@@ -52,6 +52,22 @@ WHATSAPP_HOOK_HMAC_KEY=<same as WAHA_HMAC_KEY>
 
 The older names `WHATSAPP_DOWNLOAD_MEDIA` / `WHATSAPP_FILES_MIMETYPES` still work only as fallbacks.
 
+## Media URL validation (WAHA_MEDIA_UNTRUSTED)
+
+WAHA 2026.10.1 builds `media.url` as `<WAHA's own WAHA_BASE_URL>/api/files/<session>/<message-id>.<ext>`.
+If WAHA's `WAHA_BASE_URL` is unset, that base is `http://localhost:3000`. The backend accepts the
+advertised origin only when it is one of these:
+
+* the backend's `WAHA_BASE_URL` (case and default ports normalised)
+* an entry in `WAHA_MEDIA_ORIGINS` (an optional path prefix, e.g. `https://host/waha`, is allowed)
+* WAHA's built-in default `http://localhost|127.0.0.1:3000` (or the `WAHA_BASE_URL` port)
+
+The path must be `/api/files/[<WAHA_SESSION>/]<file>`. The URL must have no query, fragment, user info,
+`..` or encoded separators. The file is then always downloaded from the backend's `WAHA_BASE_URL`
+with only the validated path. The payload never chooses the host. Redirects are not followed, and
+the download is limited to 8 s and 2 MB. Each rejection logs a `check=` name and categorical facts
+(`scheme`, `origin_kind`, `host_match`, `port_match`). The log never contains the URL, host or file name.
+
 ## Safe diagnostic commands
 
 Run these in the EasyPanel console of the named service. They print no secrets.
@@ -91,7 +107,10 @@ INFO yojana {"code":"WAHA_REPLY_SENT","event":"3f9a1c2e","result":"replied"}
 | `WAHA_WEBHOOK_IGNORED not_opted_in` | The user must send `YOJANA` first (also after STOP, or after `CASE_RETENTION_DAYS` of inactivity). |
 | `WAHA_WEBHOOK_IGNORED session_mismatch` | Set `WAHA_SESSION` to the WAHA session name. |
 | `WAHA_MEDIA_UNAVAILABLE … media.url is null` | Set `WAHA_EVENTS_DOWNLOAD_MEDIA=true` and include `audio` in the mimetype filter. Restart WAHA. |
-| `WAHA_MEDIA_UNTRUSTED` | Make WAHA's `WAHA_BASE_URL` equal to the backend's, or add WAHA's advertised origin to `WAHA_MEDIA_ORIGINS`. |
+| `WAHA_MEDIA_UNTRUSTED check=origin` | WAHA advertises an origin the backend does not trust. `origin_kind=public` means WAHA's own `WAHA_BASE_URL` is its public HTTPS domain: add exactly that origin to the backend's `WAHA_MEDIA_ORIGINS`. `host_match`/`port_match` show which part differs. |
+| `WAHA_MEDIA_UNTRUSTED check=query` | WAHA uses S3/presigned media storage. Use local media storage. |
+| `WAHA_MEDIA_UNTRUSTED check=session` | `WAHA_SESSION` on the backend differs from the WAHA session name. |
+| `WAHA_MEDIA_UNTRUSTED check=path_prefix\|filename\|traversal\|encoded_separator\|scheme\|userinfo` | Unexpected URL shape. Report the check name; do not loosen the validator. |
 | `WAHA_MEDIA_DOWNLOAD_FAILED status=401` | `WAHA_API_KEY` differs between the services. 404: the file expired (`WHATSAPP_FILES_LIFETIME`) or WAHA restarted. |
 | `WAHA_AUDIO_DECODE_FAILED ffmpeg not installed` | Wrong image. Rebuild from this Dockerfile. |
 | `SARVAM_STT_DISABLED` | Set `SARVAM_STT_ENABLED=true` and `SARVAM_API_KEY`, then restart. |

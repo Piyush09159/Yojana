@@ -116,12 +116,112 @@ def test_flat_and_session_nested_file_paths_accepted(monkeypatch, url):
 @pytest.mark.parametrize('url', ['http://waha:3000/api/files/othersession/a.oga',
                                  'http://waha:3000/api/files/default/../a.oga',
                                  'http://waha:3000/api/files/default%2Fa.oga',
-                                 'http://localhost:3000/api/files/a.oga'])
+                                 'https://waha.example.org/api/files/a.oga'])
 def test_other_sessions_traversal_and_unlisted_origins_rejected(monkeypatch, url):
     configure_waha(monkeypatch)
     with pytest.raises(media.VoiceFailure) as err:
         media.media_url({'url': url, 'mimetype': 'audio/ogg'})
     assert err.value.code == 'WAHA_MEDIA_UNTRUSTED'
+
+
+# ---------- WAHA 2026.10.1 media URL structure (production WAHA_MEDIA_UNTRUSTED regression) ----------
+# WAHA: url = config.baseUrl + '/api/files/' + `${session}/${message.id}.${ext}`, where baseUrl is
+# WAHA's own WAHA_BASE_URL, else http://localhost:3000 (WHATSAPP_API_HOSTNAME/PORT defaults).
+NOWEB_FILE = 'false_900000000000@c.us_3EB0C431A5F8B2D1E7.oga'
+LID_FILE = 'false_123456789012345@lid_AC1F2E3D4B5A69788.oga'
+
+
+@pytest.mark.parametrize('base,advertised,origins', [
+    ('http://waha:3000', 'http://waha:3000', ''),                       # same value on both sides
+    ('http://waha:3000/', 'http://WAHA:3000', ''),                      # trailing slash, host case
+    ('http://waha:3000', 'http://localhost:3000', ''),                  # WAHA_BASE_URL unset on WAHA
+    ('http://yojana_waha:3000', 'http://127.0.0.1:3000', ''),
+    ('https://waha.example.org', 'https://waha.example.org:443', ''),  # explicit default port
+    ('http://yojana_waha:3000', 'https://waha.example.org', 'https://waha.example.org/'),
+    ('http://yojana_waha:3000', 'https://example.org/waha', 'https://example.org/waha'),  # path prefix
+])
+@pytest.mark.parametrize('file', [NOWEB_FILE, LID_FILE])
+def test_real_waha_media_urls_accepted_and_fetched_from_backend_origin(monkeypatch, base, advertised, origins, file):
+    configure_waha(monkeypatch)
+    monkeypatch.setenv('WAHA_BASE_URL', base)
+    monkeypatch.setenv('WAHA_MEDIA_ORIGINS', origins)
+    url = media.media_url({'url': f'{advertised}/api/files/default/{file}', 'mimetype': 'audio/ogg; codecs=opus'})
+    assert url == base.rstrip('/') + f'/api/files/default/{file}'
+
+
+def test_localhost_advertised_url_is_fetched_from_waha_base_url_not_localhost(channel, monkeypatch):
+    """WAHA's localhost default is only a name to match; the request and API key go to WAHA_BASE_URL."""
+    client, sender = channel
+    mock_extraction(monkeypatch)
+    monkeypatch.delenv('WAHA_MEDIA_ORIGINS', raising=False)
+    calls = fake_network(monkeypatch)
+    payload = voice('L1', url='http://localhost:3000/api/files/default/false_900000000000@c.us_L1.oga')
+    assert post(client, payload).json()['status'] == 'replied'
+    assert [(r.url.scheme, r.url.host, r.url.port) for r in calls['waha']] == [('http', 'waha', 3000)]
+    assert str(calls['waha'][0].url).endswith('/api/files/default/false_900000000000@c.us_L1.oga')
+
+
+def test_media_download_never_follows_redirects(monkeypatch):
+    configure_waha(monkeypatch)
+    seen = []
+
+    def handle(request):
+        seen.append(request.url.host)
+        return httpx.Response(302, headers={'Location': 'http://169.254.169.254/latest/meta-data'})
+    original = httpx.Client
+    monkeypatch.setattr(media.httpx, 'Client', lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
+    with pytest.raises(media.VoiceFailure) as err:
+        media.download({'url': 'http://localhost:3000/api/files/default/a.oga', 'mimetype': 'audio/ogg'})
+    assert err.value.code == 'WAHA_MEDIA_DOWNLOAD_FAILED' and err.value.status == 302 and seen == ['waha']
+
+
+@pytest.mark.parametrize('url,check', [
+    ('https://waha.example.org/api/files/default/a.oga', 'origin'),       # public WAHA, not listed
+    ('http://evil.invalid/api/files/default/a.oga', 'origin'),
+    ('http://localhost:8080/api/files/default/a.oga', 'origin'),          # localhost, other port
+    ('http://waha:3001/api/files/default/a.oga', 'origin'),
+    ('ftp://waha:3000/api/files/default/a.oga', 'scheme'),
+    ('file:///api/files/default/a.oga', 'scheme'),
+    ('http://u:p@waha:3000/api/files/default/a.oga', 'userinfo'),
+    ('http://waha:3000/api/files/default/a.oga?X-Amz-Signature=x', 'query'),
+    ('http://waha:3000/api/files/default/a.oga#x', 'fragment'),
+    ('http://waha:3000/api/sessions/default/a.oga', 'path_prefix'),
+    ('http://waha:3000/files/default/a.oga', 'path_prefix'),
+    ('http://waha:3000/api/files/default/%2e%2e/a.oga', 'encoded_separator'),
+    ('http://waha:3000/api/files/default%2Fa.oga', 'encoded_separator'),
+    ('http://waha:3000/api/files/default/a%00.oga', 'encoded_separator'),
+    ('http://waha:3000/api/files/default/a%3f.oga', 'encoded_separator'),
+    ('http://waha:abc/api/files/default/a.oga', 'origin'),              # malformed port
+    ('http://[::1]:3000/api/files/default/a.oga', 'origin'),            # other loopback spelling
+    ('http://localhost.evil.invalid:3000/api/files/default/a.oga', 'origin'),
+    ('http://127.0.0.2:3000/api/files/default/a.oga', 'origin'),
+    ('https://localhost:3000/api/files/default/a.oga', 'origin'),      # default is http only
+    ('http://waha:3000/api/files/default/../x.oga', 'traversal'),
+    ('http://waha:3000/api/files/other/a.oga', 'session'),
+    ('http://waha:3000/api/files/default/x/a.oga', 'path_depth'),
+    ('http://waha:3000/api/files/default/.hidden', 'filename'),
+    ('http://waha:3000/api/files/default/a b.oga', 'filename'),
+])
+def test_malicious_media_urls_rejected_with_named_check(monkeypatch, url, check):
+    configure_waha(monkeypatch)
+    with pytest.raises(media.VoiceFailure) as err:
+        media.media_url({'url': url, 'mimetype': 'audio/ogg'})
+    assert err.value.code == 'WAHA_MEDIA_UNTRUSTED' and err.value.flags['check'] == check
+
+
+def test_untrusted_diagnostic_names_check_without_url_or_file(channel, monkeypatch, caplog):
+    client, sender = channel
+    calls = fake_network(monkeypatch)
+    payload = voice('U1', url='https://waha.example.org/api/files/default/false_900000000000@c.us_U1.oga')
+    with caplog.at_level('INFO', logger='yojana.diagnostics'):
+        assert post(client, payload).json()['status'] == 'transcription_failed'
+    assert calls['waha'] == [] and sender.call_count == 1      # no download, one text reply
+    line = next(r.getMessage() for r in caplog.records if 'WAHA_MEDIA_UNTRUSTED' in r.getMessage())
+    record = json.loads(line)
+    assert record['check'] == 'origin' and record['origin_kind'] == 'public'
+    assert record['host_match'] is False and record['scheme'] == 'https'
+    for secret in ('waha.example.org', '900000000000', 'U1.oga', '/api/files', 'fixture'):
+        assert secret not in line
 
 
 def test_advertised_origin_alias_downloads_from_trusted_origin_only(channel, monkeypatch):

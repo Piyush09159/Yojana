@@ -2,6 +2,7 @@
 Offline: no Docker, no Postgres, no network."""
 import ast
 import importlib
+import importlib.util
 import re
 import time
 from pathlib import Path
@@ -45,9 +46,20 @@ def test_dockerfile_copies_every_package_the_api_and_worker_import():
 
 
 def test_smoke_import_list_imports():
+    """Project packages must import here. Third-party ones (e.g. redis, only in requirements-deploy.txt)
+    may be absent from the CI test env; the Docker build runs smoke_imports.py with them installed,
+    so here they only need to be pinned in a requirements file the Dockerfile installs."""
     from deploy_helpers import smoke_modules
+    local = {p.name for p in ROOT.iterdir() if (p / '__init__.py').exists()}
+    pinned = ''.join((ROOT / f).read_text(encoding='utf-8').lower()
+                     for f in ('requirements.lock.txt', 'requirements-deploy.txt'))
+    dockerfile = (ROOT / 'Dockerfile').read_text(encoding='utf-8')
+    assert 'requirements.lock.txt' in dockerfile and 'requirements-deploy.txt' in dockerfile
     for name in smoke_modules():
-        importlib.import_module(name)
+        if name.split('.')[0] in local or importlib.util.find_spec(name) is not None:
+            importlib.import_module(name)
+        else:
+            assert re.search(rf'^{re.escape(name)}\b', pinned, re.M), f'{name} not pinned for the image'
 
 
 # ---------- container health check ----------

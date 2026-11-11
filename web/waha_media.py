@@ -30,7 +30,7 @@ MAX_SECONDS = 15
 AUDIO_TYPES = {'audio/ogg', 'audio/opus', 'audio/oga', 'application/ogg', 'audio/wav', 'audio/x-wav',
                'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/m4a', 'audio/x-m4a', 'audio/aac',
                'audio/webm', 'audio/amr', 'audio/3gpp'}
-_FILE = r'[A-Za-z0-9_@.%-]+'
+_FILE = r'[A-Za-z0-9_@.:+=%-]+'  # NOWEB: false_<jid>_<id>.<ext>
 
 
 class VoiceFailure(ValueError):
@@ -39,6 +39,7 @@ class VoiceFailure(ValueError):
     def __init__(self, code, detail='', status=None):
         super().__init__(code if not detail else f'{code}: {detail}')
         self.code, self.detail, self.status = code, detail, status
+        self.flags = {}
 
 
 class _NoMediaURLs(logging.Filter):
@@ -55,32 +56,98 @@ def mimetype(media):
     return str((media or {}).get('mimetype') or '').split(';')[0].strip().lower()
 
 
-def _origin(url):
-    parts = urlsplit(url.strip().rstrip('/'))
-    return parts.scheme.lower(), parts.netloc.lower()
+_DEFAULT_PORTS = {'http': 80, 'https': 443}
+# WAHA's own default when its WAHA_BASE_URL is unset: http://{WHATSAPP_API_HOSTNAME=localhost}:{PORT=3000}
+_WAHA_DEFAULT_HOSTS = {'localhost', '127.0.0.1'}
+
+
+def _endpoint(url):
+    """(scheme, host, port, path prefix) with default ports filled in and case normalised."""
+    parts = urlsplit(str(url).strip())
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port or _DEFAULT_PORTS.get(scheme)
+    except ValueError:
+        port = None
+    return scheme, (parts.hostname or '').lower(), port, parts.path.rstrip('/')
+
+
+def _host_kind(host):
+    if host in _WAHA_DEFAULT_HOSTS:
+        return 'localhost'
+    if not host:
+        return 'none'
+    if '.' not in host or host.endswith(('.internal', '.local')) or re.fullmatch(r'[\d.]+', host):
+        return 'private'
+    return 'public'
+
+
+def _untrusted(check, **flags):
+    """Reject with the name of the failed check. Flags are categorical only: never URLs or names."""
+    err = VoiceFailure('WAHA_MEDIA_UNTRUSTED', f'check={check}')
+    err.flags = {'check': check, **flags}
+    return err
+
+
+def _trusted_endpoints():
+    base = _endpoint(os.environ['WAHA_BASE_URL'])
+    trusted = [('base', base)]
+    trusted += [('media_origins', _endpoint(v)) for v in os.getenv('WAHA_MEDIA_ORIGINS', '').split(',') if v.strip()]
+    # WAHA advertises http://localhost:<port> unless its own WAHA_BASE_URL is set. That name can only
+    # mean "the WAHA instance itself"; the download still goes to the backend's WAHA_BASE_URL below.
+    trusted += [('waha_default', ('http', h, port, '')) for h in _WAHA_DEFAULT_HOSTS
+                for port in {3000, base[2]} if port]
+    return base, trusted
 
 
 def media_url(media):
-    """The URL to download this note from: always on the trusted WAHA origin."""
+    """The URL to download this note from: always on the trusted WAHA origin.
+
+    Only the validated `/api/files/[<session>/]<file>` part of media.url is kept; scheme, host and
+    port always come from WAHA_BASE_URL, so the payload can never steer the request or the API key."""
     if not isinstance(media, dict) or media.get('error'):
         raise VoiceFailure('WAHA_MEDIA_UNAVAILABLE', 'media missing or download error in WAHA')
     if mimetype(media) not in AUDIO_TYPES:
         raise VoiceFailure('WAHA_MEDIA_UNSUPPORTED', mimetype(media) or 'no mimetype')
     if not media.get('url'):
         raise VoiceFailure('WAHA_MEDIA_UNAVAILABLE', 'media.url is null (WAHA_EVENTS_DOWNLOAD_MEDIA)')
-    candidate = urlsplit(str(media['url']))
-    base = urlsplit(os.environ['WAHA_BASE_URL'].rstrip('/'))
-    allowed = {(base.scheme.lower(), base.netloc.lower())}
-    allowed |= {_origin(v) for v in os.getenv('WAHA_MEDIA_ORIGINS', '').split(',') if v.strip()}
-    session = re.escape(os.getenv('WAHA_SESSION', 'default'))
-    path = unquote(candidate.path)
-    if (candidate.scheme not in ('http', 'https') or (candidate.scheme.lower(), candidate.netloc.lower()) not in allowed
-            or candidate.username or candidate.password or candidate.query or candidate.fragment
-            # WAHA serves files at /api/files/<file>; newer builds nest them per session.
-            or not re.fullmatch(rf'/api/files/(?:{session}/)?{_FILE}', candidate.path)
-            or '..' in path or path.count('/') > candidate.path.count('/')):
-        raise VoiceFailure('WAHA_MEDIA_UNTRUSTED', 'media.url origin or path not allowed')
-    return f'{base.scheme}://{base.netloc}{base.path.rstrip("/")}{candidate.path}'
+    raw = str(media['url']).strip()
+    candidate = urlsplit(raw)
+    scheme, host, port, path = _endpoint(raw)
+    base, trusted = _trusted_endpoints()
+    facts = {'scheme': scheme or 'none', 'origin_kind': _host_kind(host),
+             'host_match': host == base[1], 'port_match': port == base[2]}
+    if scheme not in ('http', 'https'):
+        raise _untrusted('scheme', **facts)
+    if not host or port is None:
+        raise _untrusted('origin', **facts)            # malformed host/port never matches anything
+    if candidate.username or candidate.password:
+        raise _untrusted('userinfo', **facts)
+    if candidate.query:
+        raise _untrusted('query', **facts)        # e.g. S3 presigned URLs: not supported
+    if candidate.fragment:
+        raise _untrusted('fragment', **facts)
+    match = next(((name, prefix) for name, (s, h, p, prefix) in trusted
+                  if (s, h, p) == (scheme, host, port) and (path + '/').startswith(prefix + '/api/files/')), None)
+    if match is None:
+        same_origin = any((s, h, p) == (scheme, host, port) for _, (s, h, p, _) in trusted)
+        raise _untrusted('path_prefix' if same_origin else 'origin', **facts)
+    facts['origin_kind'] = match[0]
+    rest = candidate.path[len(match[1]):]                  # '/api/files/...'
+    # WAHA does not percent-encode; tolerate only an encoded '@' (%40) from intermediaries.
+    if re.search(r'%(?!40)', rest, re.I):
+        raise _untrusted('encoded_separator', **facts)
+    if '..' in unquote(rest).split('/') or '\\' in unquote(rest):
+        raise _untrusted('traversal', **facts)
+    session = os.getenv('WAHA_SESSION', 'default')
+    segments = rest[len('/api/files/'):].split('/')
+    if len(segments) == 2 and segments[0] != session:
+        raise _untrusted('session', **facts)
+    if len(segments) not in (1, 2):
+        raise _untrusted('path_depth', **facts)
+    if not re.fullmatch(_FILE, segments[-1]) or segments[-1].startswith('.'):
+        raise _untrusted('filename', **facts)
+    return f'{base[0]}://{urlsplit(os.environ["WAHA_BASE_URL"].strip()).netloc}{base[3]}{rest}'
 
 
 def _inline(media):
