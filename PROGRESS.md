@@ -12,11 +12,75 @@ This file is the project's history, newest entry first. Read it top to bottom to
 |---|---|
 | Version | v2.8 integration: refactor (v2.4 deployment, v2.5 citizen experience, WhatsApp, voice, Redis cache, scheme alerts) + scheme database + agent orchestration |
 | Last updated | 2026-11-11 |
-| Tests | 611 passed, 14 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (6/6 passed locally) |
+| Tests | 649 passed, 14 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (6/6 passed locally); real PDF render tests run inside the yojana-pdf image (7/7) |
 | Phase | refactor demo plus PostgreSQL scheme catalog (SCHEME_DATABASE_URL), five agents, background job lanes |
 | Schemes | 267 public scheme records in data/schemes.db; 270 in the Neon catalog; 523 pages queued |
 | Eval | eligibility 36/36, start-with 12/12, name matcher P=R=1.00 (small sets); Reader agent 52/53 (98%); Verifier 5/5 caught, 0/3 wrongly dropped |
-| Next task | Deploy yojana-stt (docs/LOCAL_STT.md), switch yojana-api to STT_PROVIDER=local, live hi/mr/en voice-note test; benchmark IndicConformer or a Marathi Whisper (Marathi CER 0.55 with whisper small) |
+| Next task | Deploy yojana-pdf on Render (docs/PDF_SERVICE.md) and test the live URL; set PDF_SERVICE_URL/TOKEN on yojana-api; add a "Download guide" button in the frontend. Then: deploy yojana-stt (docs/LOCAL_STT.md) |
+
+---
+
+## Application-guide PDFs: new `pdf_service` for Render: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `feat/pdf-guides` (from `refactor` at PR #9). Not committed, pushed or deployed: the user does that.
+
+**Why:** team lead's brief. Citizens need a printable "how to apply" guide for their shortlisted schemes, in en/hi/mr, built only from verified catalog content, delivered as a browser download now and over WhatsApp later.
+
+**What:**
+* **New `pdf_service/` microservice** (own image `Dockerfile.pdf`, `requirements-pdf.txt`, Render Blueprint `render.yaml`). FastAPI + Jinja2 + WeasyPrint 70 + Segno; same pattern as `stt_service`.
+  * Endpoints: `GET /health`, `POST /api/v1/pdf/generate`, `POST /api/v1/pdf/generate-batch`, all PDF bytes.
+  * `models.py`: strict pydantic contract. Unknown fields are refused; lengths and counts are capped; URLs must be absolute http(s) with no credentials; control characters are rejected; scheme ids are unique. There is no deadline field, and the `ineligible` status is refused.
+  * `i18n.py`: en/hi/mr labels. Statuses are worded as "conditions we could check". The cover says the office decides, application is free, and never share Aadhaar/OTP. Scheme content is not translated, and the guide says so. Amounts use Indian digit grouping.
+  * `render.py` and templates:
+    * Autoescaped HTML; CSS inline.
+    * QR codes as inline SVG, only for https links on `gov.in`/`nic.in` (`PDF_QR_DOMAINS`).
+    * The WeasyPrint `URLFetcher` allows only `data:` URIs, so payload links are never fetched.
+    * A4 layout: a cover with the summary table, then one page per scheme. Per-language page footers.
+    * Noto Sans and Noto Sans Devanagari are embedded as subsets.
+  * `app.py`:
+    * Bearer tokens from `PDF_SERVICE_TOKENS`: comma-separated for rotation, at least 24 characters, compared in constant time. With no valid token the service fails closed (503 `not_configured`).
+    * Checks run in order: auth before the body is read, then the media type (415), the streaming body cap (413), and validation (422 with locations only, never the values).
+    * Bounded render slots (503 `busy` with `Retry-After`); 500 `render_failed` without details; `no-store` headers.
+    * The filename never contains the name. Logs hold counts only. No disk writes.
+* **Backend side:**
+  * `web/pdf_client.py`: httpx `PdfClient` with timeout, retries on connect errors, timeouts and 429/502/503/504 (honours `Retry-After`), typed errors (`PdfNotConfigured`, `PdfAuthError`, `PdfRejected`, `PdfUnavailable`), and `warm_up()` for Render cold starts. It refuses plain http to a non-local host. `guide_from_cards()` maps engine cards and catalog records to the payload and drops ineligible schemes and schemes without a source.
+  * `web/pdf_api.py`: `GET /api/v2/conversation/{id}/guide.pdf?lang=`. The owner check is the same as the conversation's; the shortlist is rebuilt by the engine from the stored profile; the PDF is streamed without being stored. The route returns 404 `pdf_disabled` until `PDF_SERVICE_URL` is set.
+  * `web/app.py`: +2 lines (router).
+* **Examples:** `scripts/make_pdf_examples.py` builds payloads for 3 synthetic people from the real engine and catalog. `python -m pdf_service.examples` renders them; this was run in the image, producing `pdf_service/examples/guide_{en,hi,mr}.pdf` and `guides_batch.pdf`.
+* **Config and docs:**
+  * `.env.example` (`PDF_SERVICE_URL/TOKEN/TIMEOUT/RETRIES`)
+  * `requirements-dev.txt` (jinja2, segno)
+  * CI workflow (installs jinja2 and segno so the new tests run)
+  * docs/PDF_SERVICE.md: API spec, environment variables, content rules, privacy, Render steps, rotation
+  * README section, CLAUDE.md commands
+* **Not touched:** WhatsApp voice, STT, agents/orchestrator, Neon migrations, Redis, the frontend.
+
+**Tests:**
+* tests/test_pdf_service.py (37, offline, fake renderer and `httpx.MockTransport`):
+  * health; download headers; batch
+  * no or weak token; 401; rotation
+  * 415 and 413; 13 invalid payloads, none of them echoed
+  * busy 503; render failure 500
+  * log privacy; HTML escaping and no external resources; QR policy
+  * label parity and honest wording; "not published" fallbacks; `inr()`
+  * client: success, retry, typed errors, configuration, warm-up
+  * `guide_from_cards`
+  * route: off, builds on the server, error mapping
+* tests/test_pdf_render_real.py (7, skipped without WeasyPrint): real render en/hi/mr. Checks: every font embedded, Devanagari text extractable, a page per scheme, no name in the metadata, batch, fetcher refuses https/metadata-IP/file URLs. **7/7 passed inside the image.**
+* Full suite: **649 passed, 14 skipped.**
+
+**Measured (local Docker, this laptop):**
+* One guide (3 schemes, mr): 0.7 s and 52 KB. Batch of 3 guides (13 schemes): 2.0 s and 127 KB.
+* `pdffonts`: Noto Sans and Noto Sans Devanagari (regular and bold) are embedded, subset and Unicode-mapped.
+* The image runs as uid 10001; its healthcheck passes on Render's `PORT`.
+
+**Known limits:**
+* `how_to_apply` exists for about 230 of 267 schemes and documents for 107, so many guides say "check the official page".
+* Rule reasons and benefit text are English in every language, as published.
+* Engine shortlists for some personas include weak fits (for example PMGSY for a widow profile); this is an engine/catalog issue, not a PDF one.
+* Free Render instances sleep (first request can take up to about a minute; the client timeout is 60 s and `warm_up()` exists).
+* No frontend button yet.
+* Pre-existing behaviour, not changed here: opening `data/schemes.db` (`store/sqlite.connect`) applies the schema and WAL mode, which changes the committed file even on a read. `make_pdf_examples.py` therefore reads a temporary copy. Check `git status data/` before committing after any local script run.
 
 ---
 

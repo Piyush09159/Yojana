@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="{{ doc_lang }}">
+<head>
+<meta charset="utf-8">
+<title>{{ doc_title }}</title>
+<meta name="generator" content="Yojana Saathi PDF service">
+<style>
+{% include 'guide.css' %}
+{% for lang in languages %}
+@page guide-{{ lang }} {
+  @bottom-right { content: {{ all_labels[lang].page|css_string }} " " counter(page) " " {{ all_labels[lang].of|css_string }} " " counter(pages); font-size: 7.5pt; color: #555; }
+}
+.guide-{{ lang }} { page: guide-{{ lang }}; }
+{% endfor %}
+</style>
+</head>
+<body>
+{% for v in guides %}
+{% set g = v.g %}{% set L = v.L %}{% set gi = loop.index %}
+<section class="guide guide-{{ g.language }}" lang="{{ g.language }}">
+  <div class="footer">{{ L.footer.format(date=v.day|day) }}</div>
+
+  <div class="brand">{{ L.subtitle }}</div>
+  <h1>{{ L.title }}</h1>
+  <table class="meta">
+    {% if g.recipient_name %}<tr><th>{{ L.prepared_for }}</th><td>{{ g.recipient_name }}</td></tr>{% endif %}
+    <tr><th>{{ L.date }}</th><td>{{ v.day|day }}</td></tr>
+    {% if g.reference %}<tr><th>{{ L.reference }}</th><td>{{ g.reference }}</td></tr>{% endif %}
+  </table>
+
+  <div class="notice">
+    <h2>{{ L.read_first }}</h2>
+    <ul>{% for line in L.notice %}<li>{{ line }}</li>{% endfor %}</ul>
+    {% if g.language != 'en' %}<p class="note">{{ L.not_translated }}</p>{% endif %}
+  </div>
+
+  <h2>{{ L.schemes_in_guide }}</h2>
+  <table class="summary">
+    {% for sv in v.schemes %}
+    <tr>
+      <td class="num">{{ loop.index }}</td>
+      <td><a href="#g{{ gi }}-s{{ loop.index }}">{{ sv.s.name }}</a>{% if sv.s.name_local and sv.s.name_local != sv.s.name %}<span class="local">{{ sv.s.name_local }}</span>{% endif %}</td>
+      <td class="state">{{ L.status_short[sv.s.status] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  {% for sv in v.schemes %}{% set s = sv.s %}
+  <article class="scheme" id="g{{ gi }}-s{{ loop.index }}">
+    <div class="count">{{ L.scheme_no.format(n=loop.index, total=v.schemes|length) }}</div>
+    <h2>{{ s.name }}</h2>
+    {% if s.name_local and s.name_local != s.name %}<div class="local">{{ s.name_local }}</div>{% endif %}
+    {% if s.agency %}<p class="agency">{{ L.agency }}: {{ s.agency }}</p>{% endif %}
+    <div class="badge {{ 'ok' if s.verified else 'warn' }}">{{ L.verified if s.verified else L.unverified }}{% if s.source_site %} · {{ s.source_site }}{% endif %}</div>
+    <div class="status status-{{ s.status }}"><strong>{{ L.status }}:</strong> {{ L.status_text[s.status] }}</div>
+
+    {% if s.benefit or s.benefit_annual_inr %}
+    <h3>{{ L.benefit }}</h3>
+    <p>{{ s.benefit }}{% if s.benefit_annual_inr %} <span class="amount">({{ L.about_per_year.format(amount=s.benefit_annual_inr|inr) }})</span>{% endif %}</p>
+    {% endif %}
+
+    {% if s.conditions_met %}
+    <h3>{{ L.conditions_met }}</h3>
+    <ul>{% for item in s.conditions_met %}<li>{{ item }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if s.check_yourself %}
+    <h3>{{ L.check_yourself }}</h3>
+    <ul>{% for item in s.check_yourself %}<li>{{ item }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if s.missing_information %}
+    <h3>{{ L.missing }}</h3>
+    <ul>{% for item in s.missing_information %}<li>{{ item }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    <h3>{{ L.documents }}</h3>
+    {% if s.documents %}
+    <ul class="docs">{% for d in s.documents %}<li><span class="box"></span>{{ d.name }}{% if d.issued_by %} <span class="by">({{ L.issued_by }}: {{ d.issued_by }})</span>{% endif %}</li>{% endfor %}</ul>
+    {% else %}
+    <p class="empty">{{ L.no_documents }}</p>
+    {% endif %}
+
+    <h3>{{ L.how_to_apply }}</h3>
+    {% if sv.steps %}
+    <div class="steps">{% for line in sv.steps %}<p>{{ line }}</p>{% endfor %}</div>
+    {% else %}
+    <p class="empty">{{ L.no_steps }}</p>
+    {% endif %}
+
+    <h3>{{ L.links }}</h3>
+    <div class="links">
+      {% for link in sv.links %}
+      <div class="link">
+        {% if link.qr %}<img src="{{ link.qr }}" alt="QR">{% endif %}
+        <div><span class="what">{{ L[link.kind] }}</span><a href="{{ link.url }}">{{ link.url }}</a>{% if link.qr %}<span class="scan">{{ L.scan }}</span>{% endif %}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% if s.last_verified %}<p class="checked">{{ L.last_checked }}: {{ s.last_verified|day }}</p>{% endif %}
+  </article>
+  {% endfor %}
+</section>
+{% endfor %}
+</body>
+</html>

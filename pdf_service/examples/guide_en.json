@@ -1,0 +1,144 @@
+{
+  "language": "en",
+  "schemes": [
+    {
+      "id": "ignoaps",
+      "name": "Indira Gandhi National Old Age Pension (IGNOAPS)",
+      "name_local": null,
+      "status": "eligible",
+      "verified": true,
+      "benefit": "Monthly pension: central share Rs 200 (age 60-79) or Rs 500 (80+), plus state top-up",
+      "benefit_annual_inr": 2400,
+      "conditions_met": [
+        "Applicant must be 60 or older",
+        "Applicant must belong to a Below Poverty Line household"
+      ],
+      "check_yourself": [],
+      "missing_information": [],
+      "documents": [
+        {
+          "name": "Aadhaar card",
+          "issued_by": "UIDAI / Aadhaar Seva Kendra"
+        },
+        {
+          "name": "Age proof (birth certificate, school record or Aadhaar)",
+          "issued_by": "Gram panchayat / school / UIDAI"
+        },
+        {
+          "name": "BPL ration card or BPL certificate",
+          "issued_by": "Tehsil / supply office"
+        },
+        {
+          "name": "Bank or post office passbook",
+          "issued_by": "Bank / post office"
+        }
+      ],
+      "how_to_apply": "",
+      "apply_url": null,
+      "source_url": "https://nsap.nic.in/",
+      "source_site": "",
+      "agency": "",
+      "last_verified": "2026-10-21"
+    },
+    {
+      "id": "chief_minister_animal_health_scheme__maharashtra",
+      "name": "Chief Minister Animal Health Scheme",
+      "name_local": null,
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "Provides mobile veterinary health services at the doorstep of farmers.",
+      "benefit_annual_inr": null,
+      "conditions_met": [
+        "Only for residents of Maharashtra",
+        "The scheme is intended for animal rearers/farmers."
+      ],
+      "check_yourself": [
+        "Unreviewed extraction: verify all mandatory conditions on the official source."
+      ],
+      "missing_information": [],
+      "documents": [],
+      "how_to_apply": "Call the toll-free number 1962.",
+      "apply_url": null,
+      "source_url": "https://www.zpbeed.gov.in/scheme/%e0%a4%ae%e0%a5%81%e0%a4%96%e0%a5%8d%e0%a4%af%e0%a4%ae%e0%a4%82%e0%a4%a4%e0%a5%8d%e0%a4%b0%e0%a5%80-%e0%a4%aa%e0%a4%b6%e0%a5%81-%e0%a4%86%e0%a4%b0%e0%a5%8b%e0%a4%97%e0%a5%8d%e0%a4%af-%e0%a4%af/",
+      "source_site": "zpbeed.gov.in",
+      "agency": "Zilla Parishad Beed",
+      "last_verified": "2026-10-23"
+    },
+    {
+      "id": "pradhan_mantri_awas_yojana_gramin_pmay_g",
+      "name": "Pradhan Mantri Awas Yojana – Gramin",
+      "name_local": null,
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "Financial assistance of 1.20 lakh rupees for construction or upgrading of houses for vulnerable sections.",
+      "benefit_annual_inr": 120000,
+      "conditions_met": [
+        "Only for residents of Maharashtra",
+        "Beneficiary must have resided in Maharashtra for at least 15 years.",
+        "The beneficiary must be a resident of Maharashtra.",
+        "Family annual income must be less than 1,20,000."
+      ],
+      "check_yourself": [
+        "Beneficiary must be homeless or have no fixed house."
+      ],
+      "missing_information": [],
+      "documents": [],
+      "how_to_apply": "",
+      "apply_url": null,
+      "source_url": "https://zpamravati.gov.in/scheme/%e0%a4%b0%e0%a4%be%e0%a4%b7%e0%a5%8d%e0%a4%9f%e0%a5%8d%e0%a4%b0%e0%a5%80%e0%a4%af-%e0%a4%ac%e0%a4%be%e0%a4%af%e0%a5%8b%e0%a4%97%e0%a5%85%e0%a4%b8-%e0%a4%b5%e0%a4%bf%e0%a4%95%e0%a4%be%e0%a4%b8/",
+      "source_site": "zpamravati.gov.in",
+      "agency": "Zilla Parishad Amravati",
+      "last_verified": "2026-10-22"
+    },
+    {
+      "id": "pradhan_mantri_awas_yojana_rural",
+      "name": "Pradhan Mantri Awas Yojana – Rural",
+      "name_local": null,
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "Financial assistance for construction of houses for the poor and homeless.",
+      "benefit_annual_inr": 130000,
+      "conditions_met": [
+        "The scheme is intended for citizens below the poverty line."
+      ],
+      "check_yourself": [
+        "Beneficiaries are selected from a permanent waiting list prepared by the Gram Sabha"
+      ],
+      "missing_information": [],
+      "documents": [],
+      "how_to_apply": "Beneficiaries are selected from a permanent waiting list prepared by the Gram Sabha",
+      "apply_url": null,
+      "source_url": "https://zpgondia.gov.in/en/scheme/%e0%a4%aa%e0%a5%8d%e0%a4%b0%e0%a4%a7%e0%a4%be%e0%a4%a8%e0%a4%ae%e0%a4%82%e0%a4%a4%e0%a5%8d%e0%a4%b0%e0%a5%80-%e0%a4%86%e0%a4%b5%e0%a4%be%e0%a4%b8-%e0%a4%af%e0%a5%8b%e0%a4%9c%e0%a4%a8%e0%a4%be/",
+      "source_site": "zpgondia.gov.in",
+      "agency": "Zilla Parishad Gondia",
+      "last_verified": "2026-10-23"
+    },
+    {
+      "id": "establishment_of_entrepreneurs_for_breed_development_of_rura__maharashtra",
+      "name": "Establishment of Entrepreneurs for breed development of Rural Poultry",
+      "name_local": null,
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "One time 50 percent capital subsidy up to a maximum limit of Rs. 25.00 lakhs per unit for establishment of poultry rearing and hatching unit of at least 1,000 parent birds.",
+      "benefit_annual_inr": 2500000,
+      "conditions_met": [
+        "Only for residents of Maharashtra",
+        "The scheme is open to individual farmers."
+      ],
+      "check_yourself": [
+        "The scheme is open to Self-help Groups, Farmer Producer Companies, Farmer Co-operative Societies, Collective Liability Groups, and Companies registered under Rule 8."
+      ],
+      "missing_information": [],
+      "documents": [],
+      "how_to_apply": "Beneficiary application and selection process through Online mode on the portal www.udyamimitra.in",
+      "apply_url": "https://www.udyamimitra.in",
+      "source_url": "https://www.zpbeed.gov.in/en/scheme/name-of-the-scheme-establishment-of-entrepreneurs-for-breed-development-of-rural-poultry/",
+      "source_site": "zpbeed.gov.in",
+      "agency": "Zilla Parishad Beed",
+      "last_verified": "2026-10-23"
+    }
+  ],
+  "recipient_name": "Ravi Kumar (sample)",
+  "reference": "SAMPLE-EN",
+  "generated_on": "2026-11-11"
+}

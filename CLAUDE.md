@@ -338,6 +338,8 @@ python -m saathi [--worker] [--debug]                   # live: chat through the
 python -m worker [--once|--batch N|--status]            # live: background agent lanes
 python -m stt_service                                   # local speech-to-text service (requirements-stt.txt; docs/LOCAL_STT.md)
 python scripts/bench_stt.py --audio-dir D --model-dir M  # STT WER/CER, CPU latency, memory
+docker build -f Dockerfile.pdf -t yojana-pdf .           # application-guide PDF service (Render; docs/PDF_SERVICE.md)
+python scripts/make_pdf_examples.py                      # synthetic example payloads -> pdf_service/examples/
 python -m agents.eval --live [--pace S] [reader|verifier] # live: score each agent on its gold set
 python scripts/bench_llm.py [provider:model ...]   # compare models (uses tokens)
 .\start.ps1 [-NoWeb|-Update|-Stats|-Test|-Debug]   # Windows launcher (start.bat = double-click)
