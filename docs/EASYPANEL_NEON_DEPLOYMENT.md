@@ -33,6 +33,9 @@ production by the audit. Never paste secret values into chat, tickets or Git.
 | `WAHA_MEDIA_ORIGINS` | only if WAHA's own `WAHA_BASE_URL` differs (for example `http://localhost:3000`) |
 | `STT_PROVIDER=local`, `LOCAL_STT_URL`, `LOCAL_STT_TOKEN`, `LOCAL_STT_TIMEOUT_SECONDS=30` | voice notes through the private yojana-stt service ([LOCAL_STT.md](LOCAL_STT.md)) |
 | `SARVAM_STT_ENABLED=false`, `SARVAM_API_KEY` | Sarvam only for TTS. Speech-to-text never goes to Sarvam when `STT_PROVIDER=local`. |
+| `WAHA_INTERACTIVE_LISTS=false` | WhatsApp menus as numbered text; set `true` only after a real phone shows the list ([WHATSAPP_MENUS.md](WHATSAPP_MENUS.md)) |
+| `VOICE_CONFIRM_BELOW=0.75`, `VOICE_CONFIRM_LANGUAGES=mr` | spoken numbers read back before use when STT is unsure or the note is Marathi |
+| `TTS_PROVIDER` (empty), `BROWSER_STT_MODE` (empty) | browser voice: empty keeps today's behaviour; recordings use local STT ([BROWSER_VOICE.md](BROWSER_VOICE.md)) |
 | `SCHEME_CATALOG_TTL_SECONDS` | optional, default 60 |
 
 ### yojana-worker (no domain, no port)

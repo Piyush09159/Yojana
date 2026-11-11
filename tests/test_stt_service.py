@@ -187,3 +187,12 @@ def test_logs_have_timings_but_never_audio_or_transcripts(caplog):
 ])
 def test_language_choice_limited_to_en_hi_mr(probs, hint, expected):
     assert choose_language(probs, hint) == expected
+
+
+def test_confidence_is_token_weighted_probability():
+    from types import SimpleNamespace as S
+    from stt_service.engines import confidence
+    assert confidence([]) is None
+    assert confidence([S(avg_logprob=0.0, tokens=[1, 2])]) == 1.0
+    mixed = confidence([S(avg_logprob=-0.1, tokens=[1] * 9), S(avg_logprob=-2.0, tokens=[1])])
+    assert 0.7 < mixed < 0.75                      # exp(-0.29): the long, sure segment dominates

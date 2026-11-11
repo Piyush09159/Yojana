@@ -3,7 +3,7 @@
 Request:  body = WAV bytes (mono, 16 kHz, PCM16, <=15 s); Content-Type audio/wav
           optional query ?language=en|hi|mr (hint from the chat's stored language)
           Authorization: Bearer <LOCAL_STT_TOKEN> when that variable is set
-Response: {"text", "language", "language_probability", "seconds", "ms", "engine", "no_speech"}
+Response: {"text", "language", "language_probability", "confidence", "seconds", "ms", "engine", "no_speech"}
 Errors:   JSON {"code": ...}: 401 unauthorized, 413 too_large, 415 unsupported_media_type,
           422 invalid_wav|too_long|..., 503 not_ready|busy, 500 engine_error
 
@@ -125,7 +125,7 @@ def create_app(engine=None, *, env=os.environ, load_in_background=True):
                 return _error(status, code)
             if wav.is_silent(samples):
                 info['no_speech'] = True
-                return {'text': '', 'language': hint, 'language_probability': None, 'no_speech': True,
+                return {'text': '', 'language': hint, 'language_probability': None, 'confidence': None, 'no_speech': True,
                         'seconds': info['seconds'], 'ms': int((time.perf_counter() - started) * 1000),
                         'engine': engine.name}
             if not await anyio.to_thread.run_sync(lambda: slots.acquire(timeout=queue_wait)):
@@ -142,7 +142,8 @@ def create_app(engine=None, *, env=os.environ, load_in_background=True):
             text = str(result.get('text') or '').strip()
             info.update(language=result.get('language'), no_speech=not text)
             return {'text': text, 'language': result.get('language'),
-                    'language_probability': result.get('language_probability'), 'no_speech': not text,
+                    'language_probability': result.get('language_probability'),
+                    'confidence': result.get('confidence'), 'no_speech': not text,
                     'seconds': info['seconds'], 'ms': int((time.perf_counter() - started) * 1000),
                     'engine': engine.name}
         finally:

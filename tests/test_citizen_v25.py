@@ -76,7 +76,7 @@ def setup_link(monkeypatch):
     sender=Mock();monkeypatch.setattr(waha,'_send',sender)
     client=TestClient(create_app())
     assert signed(client,'YOJANA','start').status_code==200
-    assert 'Reply *Chat* or *Call*' in sender.call_args.args[-1]
+    assert '1. English' in sender.call_args.args[-1]
     assert signed(client,'Call','call').json()['status']=='voice_link'
     url=sender.call_args.args[-1].split('\n')[-1]
     token=parse_qs(urlsplit(url).fragment)['handoff'][0]

@@ -4,7 +4,10 @@ STT providers (STT_PROVIDER):
   local   self-hosted stt_service on the private network (LOCAL_STT_URL); never falls back to Sarvam
   sarvam  Sarvam REST (opt-in; also selected when STT_PROVIDER is unset and SARVAM_STT_ENABLED=true)
   off     voice input disabled (default)
-TTS stays on Sarvam and is unaffected.
+TTS providers (TTS_PROVIDER), configured separately from STT:
+  sarvam  Sarvam text-to-speech of the assistant's reply (default when SARVAM_API_KEY is set)
+  browser no server speech; the browser's own voice reads the reply (default without a key)
+  off     no speech at all; replies are text only
 """
 import base64
 import io
@@ -70,7 +73,22 @@ def request(path, **kwargs):
         record(stage,time.perf_counter()-started,outcome)
 
 
+def tts_provider():
+    """'sarvam', 'browser' or 'off'. Unknown values mean 'browser' (no server request)."""
+    chosen = os.getenv('TTS_PROVIDER', '').strip().lower()
+    if chosen:
+        return chosen if chosen in ('sarvam', 'browser', 'off') else 'browser'
+    return 'sarvam' if os.getenv('SARVAM_API_KEY') else 'browser'
+
+
+def tts_configured():
+    return tts_provider() == 'sarvam' and bool(os.getenv('SARVAM_API_KEY'))
+
+
 def tts(text, language):
+    if os.getenv('TTS_PROVIDER') and tts_provider() != 'sarvam':
+        record('tts', 0, 'fallback')
+        raise HTTPException(503, {'code': 'tts_not_enabled', 'fallback': 'device_voice_or_text'})
     if normalize(language) not in TTS:
         record('tts',0,'fallback')
         raise HTTPException(422, {'code': 'tts_language_unavailable', 'fallback': 'read_text'})
@@ -93,6 +111,21 @@ def tts(text, language):
         return audio
     except (KeyError, IndexError, ValueError, TypeError, wave.Error, EOFError):
         raise HTTPException(502, {'code': 'invalid_speech_response'})
+
+
+def needs_confirmation(text, language, confidence):
+    """Read a transcript back before using it when it states a number (age, income, land, family
+    size) and the engine is unsure (confidence below VOICE_CONFIRM_BELOW, default 0.75) or the language
+    is one local STT handles poorly (VOICE_CONFIRM_LANGUAGES, default "mr"). Never blocks plain words."""
+    from core.language_detect import mentions_number
+    if not isinstance(text, str) or not mentions_number(text):
+        return False
+    weak = {code.strip() for code in os.getenv('VOICE_CONFIRM_LANGUAGES', 'mr').split(',') if code.strip()}
+    try:
+        below = float(os.getenv('VOICE_CONFIRM_BELOW', '0.75'))
+    except ValueError:
+        below = 0.75
+    return normalize(language) in weak or (isinstance(confidence, (int, float)) and confidence < below)
 
 
 def stt_provider():
@@ -173,7 +206,9 @@ def stt(encoded, language):
         if data.get('no_speech') or (isinstance(text, str) and not text.strip()):
             raise HTTPException(422, {'code': 'no_speech', 'fallback': 'type'})
         detected = data.get('language')
+        confidence = data.get('confidence') if isinstance(data.get('confidence'), (int, float)) else None
     else:
+        confidence = None
         data = request('speech-to-text', files={'file': ('speech.wav', raw, 'audio/wav')},
                        data={'model': os.getenv('SARVAM_STT_MODEL', 'saaras:v3'), 'mode': 'transcribe',
                              'language_code': provider_code(language)})
@@ -182,4 +217,4 @@ def stt(encoded, language):
     if not isinstance(text, str) or not text.strip() or len(text) > 1800:
         raise HTTPException(502, {'code': 'invalid_transcript'})
     from .conversation_api import _safe_message
-    return {'text': _safe_message(text), 'language': normalize(detected)}
+    return {'text': _safe_message(text), 'language': normalize(detected), 'confidence': confidence}

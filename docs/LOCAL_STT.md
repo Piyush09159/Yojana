@@ -15,7 +15,7 @@ or Sarvam keys are still set. Text-to-speech is unchanged and still uses Sarvam.
 
 | File | Purpose |
 |---|---|
-| `stt_service/app.py` | `POST /transcribe`, `GET /health`, `GET /ready`. One model instance, `STT_CONCURRENCY=1`, bounded queue wait, body limit about 484 KB, optional bearer token. Logs status, timings, duration and language only. |
+| `stt_service/app.py` | `POST /transcribe`, `GET /health`, `GET /ready`. One model instance, `STT_CONCURRENCY=1`, bounded queue wait, body limit about 484 KB, optional bearer token. Logs status, timings, duration and language only. The response also carries `confidence` (exp of the mean token log-probability, 0..1), used only to read spoken numbers back before use ([WHATSAPP_MENUS.md](WHATSAPP_MENUS.md)). |
 | `stt_service/audio.py` | Accepts mono 16 kHz PCM16 WAV of at most 15 s. Peak-based near-silence check. |
 | `stt_service/engines.py` | `FasterWhisperEngine` (default), `IndicConformerEngine` (adapter, off), `choose_language()` (en/hi/mr only, chat-language tie-break) |
 | `stt_service/download_model.py` | Pinned weight download (build time or volume init) |
