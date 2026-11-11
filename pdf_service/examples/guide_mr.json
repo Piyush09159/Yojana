@@ -1,0 +1,91 @@
+{
+  "language": "mr",
+  "schemes": [
+    {
+      "id": "ignoaps",
+      "name": "Indira Gandhi National Old Age Pension (IGNOAPS)",
+      "name_local": "इंदिरा गांधी राष्ट्रीय वृद्धापकाळ निवृत्तीवेतन",
+      "status": "eligible",
+      "verified": true,
+      "benefit": "Monthly pension: central share Rs 200 (age 60-79) or Rs 500 (80+), plus state top-up",
+      "conditions_met": [
+        "Applicant must be 60 or older",
+        "Applicant must belong to a Below Poverty Line household"
+      ],
+      "check_yourself": [],
+      "missing_information": [],
+      "documents": [
+        {
+          "name": "Aadhaar card",
+          "issued_by": "UIDAI / Aadhaar Seva Kendra"
+        },
+        {
+          "name": "Age proof (birth certificate, school record or Aadhaar)",
+          "issued_by": "Gram panchayat / school / UIDAI"
+        },
+        {
+          "name": "BPL ration card or BPL certificate",
+          "issued_by": "Tehsil / supply office"
+        },
+        {
+          "name": "Bank or post office passbook",
+          "issued_by": "Bank / post office"
+        }
+      ],
+      "how_to_apply": "",
+      "apply_url": null,
+      "source_url": "https://nsap.nic.in/",
+      "source_site": "",
+      "agency": "",
+      "last_verified": "2026-10-21"
+    },
+    {
+      "id": "pradhan_mantri_awas_yojana_rural",
+      "name": "Pradhan Mantri Awas Yojana – Rural",
+      "name_local": null,
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "Financial assistance for construction of houses for the poor and homeless.",
+      "conditions_met": [
+        "The scheme is intended for citizens below the poverty line."
+      ],
+      "check_yourself": [
+        "Beneficiaries are selected from a permanent waiting list prepared by the Gram Sabha"
+      ],
+      "missing_information": [],
+      "documents": [],
+      "how_to_apply": "Beneficiaries are selected from a permanent waiting list prepared by the Gram Sabha",
+      "apply_url": null,
+      "source_url": "https://zpgondia.gov.in/en/scheme/%e0%a4%aa%e0%a5%8d%e0%a4%b0%e0%a4%a7%e0%a4%be%e0%a4%a8%e0%a4%ae%e0%a4%82%e0%a4%a4%e0%a5%8d%e0%a4%b0%e0%a5%80-%e0%a4%86%e0%a4%b5%e0%a4%be%e0%a4%b8-%e0%a4%af%e0%a5%8b%e0%a4%9c%e0%a4%a8%e0%a4%be/",
+      "source_site": "zpgondia.gov.in",
+      "agency": "Zilla Parishad Gondia",
+      "last_verified": "2026-10-23"
+    },
+    {
+      "id": "pradhan_mantri_gram_sadak_yojana",
+      "name": "Pradhan Mantri Gram Sadak Yojana",
+      "name_local": null,
+      "status": "eligible_check_manually",
+      "verified": false,
+      "benefit": "The scheme aims to provide all-weather road connectivity to unconnected habitations in rural areas with a population of 500 and above (250 and above in tribal areas). Phase 3 focuses on upgrading rural roads connecting to secondary schools, health centers, and market committees.",
+      "conditions_met": [
+        "Habitations with a population of 500 and above (250 and above in tribal areas) that are not connected by road.",
+        "The scheme is implemented in the state of Maharashtra."
+      ],
+      "check_yourself": [
+        "Roads must be in accordance with the Road Development Plan (2001–2021) prepared by the Public Works Department."
+      ],
+      "missing_information": [],
+      "documents": [],
+      "how_to_apply": "This is an infrastructure development scheme implemented by the government; there is no individual application process for citizens.",
+      "apply_url": null,
+      "source_url": "https://rdd.maharashtra.gov.in/scheme/%e0%a4%aa%e0%a5%8d%e0%a4%b0%e0%a4%a7%e0%a4%be%e0%a4%a8%e0%a4%ae%e0%a4%82%e0%a4%a4%e0%a5%8d%e0%a4%b0%e0%a5%80-%e0%a4%97%e0%a5%8d%e0%a4%b0%e0%a4%be%e0%a4%ae%e0%a4%b8%e0%a4%a1%e0%a4%95-%e0%a4%af%e0%a5%8b/",
+      "source_site": "rdd.maharashtra.gov.in",
+      "agency": "Rural Development Department",
+      "last_verified": "2026-10-23"
+    }
+  ],
+  "recipient_name": "गणेश पाटील (नमुना)",
+  "reference": "SAMPLE-MR",
+  "generated_on": "2026-11-11"
+}

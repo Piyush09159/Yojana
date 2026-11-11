@@ -11,12 +11,34 @@ This file is the project's history, newest entry first. Read it top to bottom to
 | | |
 |---|---|
 | Version | v2.8 integration: refactor (v2.4 deployment, v2.5 citizen experience, WhatsApp, voice, Redis cache, scheme alerts) + scheme database + agent orchestration |
-| Last updated | 2026-11-11 |
-| Tests | 709 passed, 14 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (54/54 STT tests passed in the STT venv); real-Chrome /voice smoke via scripts/voice_browser_smoke.py |
+| Last updated | 2026-11-12 |
+| Tests | 825 passed, 15 skipped offline (no network; PDF service tests need requirements-dev.txt); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (54/54 STT tests passed in the STT venv); real-Chrome /voice smoke via scripts/voice_browser_smoke.py |
 | Phase | refactor demo plus PostgreSQL scheme catalog (SCHEME_DATABASE_URL), five agents, background job lanes |
 | Schemes | 267 public scheme records in data/schemes.db; 270 in the Neon catalog; 523 pages queued |
 | Eval | eligibility 36/36, start-with 12/12, name matcher P=R=1.00 (small sets); Reader agent 52/53 (98%); Verifier 5/5 caught, 0/3 wrongly dropped |
-| Next task | Review/commit feat/multilingual-conversation-ux; deploy; run the WhatsApp checklist (docs/WHATSAPP_MENUS.md) incl. interactive lists on real Android/iOS before setting WAHA_INTERACTIVE_LISTS=true; mobile-browser checklist (docs/BROWSER_VOICE.md); Marathi STT (IndicConformer benchmark) |
+| Next task | Rotate the Bolna key/secret exposed on feature/call-agent; review PR feat/confirmed-results-pdf-bolna-followup; apply migrations 006/007 on a disposable Neon branch; deploy with flags off, then enable review gate -> PDF -> call (docs/RESULT_DELIVERY.md) |
+
+---
+
+## Confirmed WhatsApp results, PDF guide over WhatsApp, consented Bolna follow-up call: 2026-11-12
+
+**Who:** Claude (Opus 5.5), branch `feat/confirmed-results-pdf-bolna-followup` from `origin/refactor` (535b2a5). Not deployed.
+
+**Why:** owner request: do not send scheme results on WhatsApp until the citizen has checked the recorded facts, send the guide as one PDF, and offer one optional automated follow-up call with separate consent.
+
+**What:**
+* **Ported** `feat/pdf-guides` by merge (pdf_service, `web/pdf_client.py`, `web/pdf_api.py`, Render files, tests; CLAUDE/PROGRESS conflicts resolved by keeping both sides). From `feature/call-agent`, only `web/bolna.py` (verification calls, now behind `BOLNA_VERIFICATION_ENABLED`, terminal no-answer/failed statuses fixed), its migration (renamed `006_bolna_verification.sql`), tests and the webhook body limit. Its `deploy/.env.example` with live-looking Bolna values was **not** ported; those values must be revoked in Bolna.
+* **Review gate** (`web/result_review.py`, `web/waha_bridge.py`, `SCHEME_REVIEW_CONFIRMATION_ENABLED`): on assessment completion WhatsApp gets a short review of whitelisted facts (income as a band) with Proceed / Change / Help, as a NOWEB list (`review:<action>:<version>`) or numbered text, in en/hi/mr. Words and numbers work too. PROCEED re-hashes the profile, so a stale approval never releases old results. CHANGE lists numbered facts, asks the chosen question (short answers read by code) and uses the existing explicit-correction path; a new version needs a new PROCEED. HELP is context-aware and changes nothing. Language change re-shows an open review. Browser behaviour is unchanged.
+* **Delivery** (`web/whatsapp_delivery.py`, migration `007_result_delivery.sql`, `WHATSAPP_PDF_SEND_ENABLED`): after PROCEED the shortlist text goes through the existing outbox. Only when WAHA accepted it is one bundled PDF (up to 5 schemes, schemes without an official source left out and the citizen told) generated and sent with WAHA `/api/sendFile` (base64, PDF magic and size checked). Leases, 30 s/2 min/10 min backoff, max attempts, one localized failure notice, GUIDE to retry. Render cold start: `warm_up()` plus retries.
+* **Follow-up call** (`web/followup_calls.py`, `BOLNA_FOLLOWUP_ENABLED`): a separate Call me / No call offer only after the PDF was accepted, only for `<digits>@c.us` chats (never @lid), naming the last 4 digits and stating automated, independent, not government, no Aadhaar/OTP/bank. CALL ME stores consent evidence and queues one durable call about 8 s later. The runner re-checks flag, consent, opt-in, review and PDF, defers during quiet hours (IST 21:00-09:00), commits `dialing` before the HTTP call (no redial after crashes or timeouts), disables Bolna retries, wipes the number after use. The status webhook (path secret plus authoritative GET /executions) updates only the call row; late webhooks are ignored. NO CALL, CHANGE and STOP cancel queued calls.
+* **Runner** (`web/delivery_worker.py`): API-startup loop by default or `python -m web.delivery_worker`; `/api/health/delivery` shows flags and the last pass. STOP scrubs addresses, phone ciphers and snapshots; retention purge covers the new tables.
+* Docs: `docs/RESULT_DELIVERY.md` (runbook, env, Bolna agent script in en/hi/mr, checks, rollback); `docs/PDF_SERVICE.md`, `.env.example`, `deploy/.env.example` (empty placeholders), `deploy/smoke_imports.py`, CLAUDE.md.
+
+**Tests:** new `tests/test_whatsapp_approval.py` (16), `tests/test_whatsapp_pdf_delivery.py` (20), `tests/test_followup_calls.py` (34, incl. a voice transcript "call me" is not consent), `tests/test_bolna.py` (9). Full suite: **825 passed, 15 skipped**. Secret scan (detect-secrets): only existing placeholders/fixtures; the leaked Bolna values are absent from this branch.
+
+**Not verified:** migrations on PostgreSQL/Neon (SQLite only here); live WAHA sendFile and list rendering on phones; live Render; any live Bolna call or webhook body shape; India DND/consent compliance; OTP form for @lid (not built).
+
+**Next:** see Current state.
 
 ---
 
@@ -63,6 +85,82 @@ This file is the project's history, newest entry first. Read it top to bottom to
 **Not verified:** interactive lists on real phones; real Android/iOS browsers; live WAHA; Sarvam TTS (not called).
 
 **Next:** owner review and commit; deploy; WhatsApp and mobile checklists; then decide `WAHA_INTERACTIVE_LISTS`.
+
+---
+
+## Application-guide PDFs: new `pdf_service` for Render: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `feat/pdf-guides` (from `refactor` at PR #9). Not committed, pushed or deployed: the user does that.
+
+**Why:** team lead's brief. Citizens need a printable "how to apply" guide for their shortlisted schemes, in en/hi/mr, built only from verified catalog content, delivered as a browser download now and over WhatsApp later.
+
+**What:**
+* **New `pdf_service/` microservice** (own image `Dockerfile.pdf`, `requirements-pdf.txt`, Render Blueprint `render.yaml`). FastAPI + Jinja2 + WeasyPrint 70 + Segno; same pattern as `stt_service`.
+  * Endpoints: `GET /health`, `POST /api/v1/pdf/generate`, `POST /api/v1/pdf/generate-batch`, all PDF bytes.
+  * `models.py`: strict pydantic contract. Unknown fields are refused; lengths and counts are capped; URLs must be absolute http(s) with no credentials; control characters are rejected; scheme ids are unique. There is no deadline field, and the `ineligible` status is refused.
+  * `i18n.py`: en/hi/mr labels. Statuses are worded as "conditions we could check". The cover says the office decides, application is free, and never share Aadhaar/OTP. Scheme content is not translated, and the guide says so.
+  * `render.py` and templates:
+    * Autoescaped HTML; CSS inline.
+    * QR codes as inline SVG, only for https links on `gov.in`/`nic.in` (`PDF_QR_DOMAINS`).
+    * The WeasyPrint `URLFetcher` allows only `data:` URIs, so payload links are never fetched.
+    * A4 layout: a cover with the summary table, then one page per scheme. Per-language page footers.
+    * Noto Sans and Noto Sans Devanagari are embedded as subsets.
+  * `app.py`:
+    * Bearer tokens from `PDF_SERVICE_TOKENS`: comma-separated for rotation, at least 24 characters, compared in constant time. With no valid token the service fails closed (503 `not_configured`).
+    * Checks run in order: auth before the body is read, then the media type (415), the streaming body cap (413), and validation (422 with locations only, never the values).
+    * Bounded render slots (503 `busy` with `Retry-After`); 500 `render_failed` without details; `no-store` headers.
+    * The filename never contains the name. Logs hold counts only. No disk writes.
+* **Backend side:**
+  * `web/pdf_client.py`: httpx `PdfClient` with timeout, retries on connect errors, timeouts and 429/502/503/504 (honours `Retry-After`), typed errors (`PdfNotConfigured`, `PdfAuthError`, `PdfRejected`, `PdfUnavailable`), and `warm_up()` for Render cold starts. It refuses plain http to a non-local host. `guide_from_cards()` maps engine cards and catalog records to the payload and drops ineligible schemes and schemes without a source.
+  * `web/pdf_api.py`: `GET /api/v2/conversation/{id}/guide.pdf?lang=`. The owner check is the same as the conversation's; the shortlist is rebuilt by the engine from the stored profile; the PDF is streamed without being stored. The route returns 404 `pdf_disabled` until `PDF_SERVICE_URL` is set.
+  * `web/app.py`: +2 lines (router).
+* **Examples:** `scripts/make_pdf_examples.py` builds payloads for 3 synthetic people from the real engine and catalog. `python -m pdf_service.examples` renders them; this was run in the image, producing `pdf_service/examples/guide_{en,hi,mr}.pdf` and `guides_batch.pdf`.
+* **Config and docs:**
+  * `.env.example` (`PDF_SERVICE_URL/TOKEN/TIMEOUT/RETRIES`)
+  * `requirements-dev.txt` (jinja2, segno)
+  * CI workflow (installs jinja2 and segno so the new tests run)
+  * docs/PDF_SERVICE.md: API spec, environment variables, content rules, privacy, Render steps, rotation
+  * README section, CLAUDE.md commands
+* **Not touched:** WhatsApp voice, STT, agents/orchestrator, Neon migrations, Redis, the frontend.
+
+**Tests:**
+* tests/test_pdf_service.py (37, offline, fake renderer and `httpx.MockTransport`):
+  * health; download headers; batch
+  * no or weak token; 401; rotation
+  * 415 and 413; 13 invalid payloads, none of them echoed
+  * busy 503; render failure 500
+  * log privacy; HTML escaping and no external resources; QR policy
+  * label parity and honest wording; "not published" fallbacks; `inr()`
+  * client: success, retry, typed errors, configuration, warm-up
+  * `guide_from_cards`
+  * route: off, builds on the server, error mapping
+* tests/test_pdf_render_real.py (7, skipped without WeasyPrint): real render en/hi/mr. Checks: every font embedded, Devanagari text extractable, a page per scheme, no name in the metadata, batch, fetcher refuses https/metadata-IP/file URLs. **7/7 passed inside the image.**
+* Full suite: **649 passed, 14 skipped.**
+
+**Measured (local Docker, this laptop):**
+* One guide (3 schemes, mr): 0.7 s and 52 KB. Batch of 3 guides (13 schemes): 2.0 s and 127 KB.
+* `pdffonts`: Noto Sans and Noto Sans Devanagari (regular and bold) are embedded, subset and Unicode-mapped.
+* The image runs as uid 10001; its healthcheck passes on Render's `PORT`.
+
+**Live on Render (user deployed, 2026-11-11):**
+* `https://yojana-pdf.onrender.com/health` returns 200 with `auth_configured: true`.
+* A wrong token gets 401, and the real token returns the full 6-page Hindi guide.
+
+**Review of the live PDF and fixes:**
+* Removed the "about ₹X a year" line and the `benefit_annual_inr` field. The catalog amount mixes one-time grants with yearly payments, so PMAY printed "₹1,30,000 per year", which is wording we invented. Sending the field is now a 422.
+* `guide_from_cards` drops repeated or empty condition lines (NFBS showed the same sentence 3×).
+* Percent-encoded links are printed readable (`…/scheme/आशा/`); the href and the QR code keep the exact URL.
+* Results after the fixes: 37/37 offline, 7/7 real render in the image, full suite 649 passed, 14 skipped. The fixes reach Render only after the user commits and pushes.
+
+**Known limits:**
+* Copy-paste text of the Devanagari parts can come out garbled in some PDF readers: the extractable text layer for some shaped clusters is imperfect. The printed and on-screen text is correct.
+* Some catalog condition texts are cut mid-word (NFBS "…lump sum financia"; rule reasons are stored at ≤200 characters).
+* `how_to_apply` exists for about 230 of 267 schemes and documents for 107, so many guides say "check the official page".
+* Rule reasons and benefit text are English in every language, as published.
+* Engine shortlists for some personas include weak fits (for example PMGSY for a widow profile); this is an engine/catalog issue, not a PDF one.
+* Free Render instances sleep (first request can take up to about a minute; the client timeout is 60 s and `warm_up()` exists).
+* No frontend button yet.
+* Pre-existing behaviour, not changed here: opening `data/schemes.db` (`store/sqlite.connect`) applies the schema and WAL mode, which changes the committed file even on a read. `make_pdf_examples.py` therefore reads a temporary copy. Check `git status data/` before committing after any local script run.
 
 ---
 

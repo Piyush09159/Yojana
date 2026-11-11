@@ -104,6 +104,9 @@ scheme_saathi/
   saathi/              conversation: understand.py, chat.py, shortlist.py, explain.py (python -m saathi)
                        investigator.py (v0.8 reasoning loop), questioner.py (reason-based questions)
   web/                 FastAPI app (app.py, session.py) + static/ page (python -m web, http://localhost:8000)
+                       result_review.py (WhatsApp PROCEED/CHANGE/HELP gate), whatsapp_delivery.py (PDF via
+                       WAHA sendFile), followup_calls.py + bolna.py (consented Bolna calls), delivery_worker.py
+                       (runner). All behind flags, default off: docs/RESULT_DELIVERY.md
   ingest/sources_mh.yaml, source_map.py, crawl.py   Maharashtra agency/ZP source map, probe, site crawler
   core/awareness.py, schemes/flagship.yaml          awareness high/medium/low for "lesser-known" results
   agents/              the five agents (reader, replier, scout, extractor, verifier) + runner.py:
@@ -339,6 +342,9 @@ python -m worker [--once|--batch N|--status]            # live: background agent
 python -m stt_service                                   # local speech-to-text service (requirements-stt.txt; docs/LOCAL_STT.md)
 python scripts/bench_stt.py --audio-dir D --model-dir M  # STT WER/CER, CPU latency, memory
 python scripts/voice_smoke_server.py; python scripts/voice_browser_smoke.py mic.wav  # real-Chrome /voice check (docs/BROWSER_VOICE.md)
+docker build -f Dockerfile.pdf -t yojana-pdf .           # application-guide PDF service (Render; docs/PDF_SERVICE.md)
+python scripts/make_pdf_examples.py                      # synthetic example payloads -> pdf_service/examples/
+python -m web.delivery_worker [--once]                   # confirmed WhatsApp results: PDF guide, call offer, calls
 python -m agents.eval --live [--pace S] [reader|verifier] # live: score each agent on its gold set
 python scripts/bench_llm.py [provider:model ...]   # compare models (uses tokens)
 .\start.ps1 [-NoWeb|-Update|-Stats|-Test|-Debug]   # Windows launcher (start.bat = double-click)

@@ -161,8 +161,12 @@ See [deployment](DEPLOYMENT.md), [environment template](deploy/.env.example), [W
 
 Details: [agent orchestration](docs/AGENT_ORCHESTRATION.md) · [implementation report](IMPLEMENTATION.md).
 
+## Application guide PDFs
+
+A separate service (`pdf_service/`, deployed on Render) turns the shortlist into a printable how-to-apply guide in English, Hindi or Marathi: documents checklist, application steps as published, official links with QR codes, and no eligibility claims or invented steps. The browser downloads it through the backend (`/api/v2/conversation/{id}/guide.pdf`); the service token never leaves the server. Off until `PDF_SERVICE_URL` is set. Details: [PDF service](docs/PDF_SERVICE.md).
+
 ## Project map
 
-`core/` policy · `agents/` the five agents · `saathi/` conversation and orchestrator · `worker/` background lanes · `store/` scheme catalog (SQLite / PostgreSQL) · `schemes/` fields/rules · `web/` FastAPI, channels and assets · `web/migrations/` storage · `frontend/` Vercel build · `deploy/` templates · `tests/` regression coverage · `docs/` runbooks and architecture.
+`pdf_service/` guide PDFs (Render) · `core/` policy · `agents/` the five agents · `saathi/` conversation and orchestrator · `worker/` background lanes · `store/` scheme catalog (SQLite / PostgreSQL) · `schemes/` fields/rules · `web/` FastAPI, channels and assets · `web/migrations/` storage · `frontend/` Vercel build · `deploy/` templates · `tests/` regression coverage · `docs/` runbooks and architecture.
 
 Built for AgentX. Questions: [repository issues](https://github.com/ShrE333/Yojana-Pilot/issues). No government affiliation, beneficiary totals or partner endorsements are claimed.

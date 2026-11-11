@@ -1,0 +1,13 @@
+# yojana-pdf image only (Dockerfile.pdf). Not installed into yojana-api/yojana-worker.
+# WeasyPrint also needs system libraries (Pango, HarfBuzz) and fonts, installed by Dockerfile.pdf.
+# Tests for pdf_service run without WeasyPrint (fake renderer); jinja2 and segno are in requirements-dev.txt.
+weasyprint==70.0
+jinja2==3.1.6
+markupsafe==3.0.4
+segno==1.6.6
+fastapi==0.162.0
+starlette==1.10.0
+uvicorn==0.54.0
+pydantic==2.14.1
+pydantic_core==2.50.1
+anyio==4.15.1
