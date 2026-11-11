@@ -135,8 +135,34 @@ See [deployment](DEPLOYMENT.md), [environment template](deploy/.env.example), [W
 - Explicit summary consent and revocation. WAHA acceptance stays distinct from recipient delivery.
 - Scheme names, official links and deterministic requirements stay unchanged across language selection.
 
+## Scheme database and agent orchestration
+
+**Scheme catalog in PostgreSQL** (`store/`). SQLite (`data/schemes.db`) stays the default; set `SCHEME_DATABASE_URL` to keep the catalog in PostgreSQL (tested on Neon). This is separate from `DATABASE_URL`, the citizen case database; both can use the same server because their tables do not overlap. Each scheme is stored with tables derived from it in code: one row per rule with its source sentence, a "who is it for" index (gender, occupation, social category, age band, income limit), sources and a 0-100 quality score.
+
+**Five agents, one job each** (`agents/`). Code runs the flow; agents never call each other and never decide eligibility. Every agent runs through `agents/runner.run_agent`, which never raises: cache, daily budget, per-role timeout, fallback chain (capped / busy / slow providers), code check, deterministic fallback.
+
+| Agent | One job | Lane |
+|---|---|---|
+| Reader | citizen message -> facts + intent | real-time |
+| Replier | free question -> answer from the engine's data, links checked | real-time |
+| Scout | profile group -> needs + scheme names to look up | gap |
+| Extractor | official page -> rules with source sentences; village/institution pages rejected | gap, batch |
+| Verifier | second opinion on rules whose sentence does not mention their field | gap, batch |
+
+**Background lanes** (`worker/`): when a citizen gets fewer than 5 good matches, a `gapfill` job (Scout + official-site search, daily budget) queues `extract` jobs (Extractor + Verifier + save), then a `notify` job sends the follow-up. Jobs are leased, retried and deduplicated in the database.
+
+```powershell
+.\.venv\Scripts\python.exe -m saathi --worker --debug     # terminal chat through the orchestrator
+.\.venv\Scripts\python.exe -m worker --batch 5            # read 5 queued official pages into the catalog
+.\.venv\Scripts\python.exe -m worker --status             # jobs and today's spend per lane
+.\.venv\Scripts\python.exe -m store pg-init               # PostgreSQL catalog: schema (SCHEME_DATABASE_URL)
+.\.venv\Scripts\python.exe -m agents.eval --live --pace 15   # score the agents (uses tokens)
+```
+
+Details: [agent orchestration](docs/AGENT_ORCHESTRATION.md) · [implementation report](IMPLEMENTATION.md).
+
 ## Project map
 
-`core/` policy · `saathi/` conversation · `schemes/` fields/rules · `web/` FastAPI, channels and assets · `web/migrations/` storage · `frontend/` Vercel build · `deploy/` templates · `tests/` regression coverage · `docs/` runbooks and architecture.
+`core/` policy · `agents/` the five agents · `saathi/` conversation and orchestrator · `worker/` background lanes · `store/` scheme catalog (SQLite / PostgreSQL) · `schemes/` fields/rules · `web/` FastAPI, channels and assets · `web/migrations/` storage · `frontend/` Vercel build · `deploy/` templates · `tests/` regression coverage · `docs/` runbooks and architecture.
 
 Built for AgentX. Questions: [repository issues](https://github.com/ShrE333/Yojana-Pilot/issues). No government affiliation, beneficiary totals or partner endorsements are claimed.

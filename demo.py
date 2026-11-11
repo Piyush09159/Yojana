@@ -9,14 +9,27 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from core import apply_answer, assist, next_best_question  # noqa: E402
+from core.fields import load_fields  # noqa: E402
 
 
 def ask(q, lang):
+    # "choice" questions (state, category, ...) list their options in fields.yaml
+    choices = q.get("choices") or list(load_fields()[q["fields"][0]].get("values") or [])
     while True:
-        raw = input(f"\n{q['text_' + lang]}\n> ").strip().lower()
+        prompt = f"\n{q['text_' + lang]}\n"
+        if q["type"] == "choice":
+            prompt += "  " + ", ".join(f"{i}={c}" for i, c in enumerate(choices, 1)) + "\n"
+        raw = input(prompt + "> ").strip().lower()
         if q["type"] == "number":
             if raw.isdigit():
                 return int(raw)
+        elif q["type"] == "choice":
+            if raw.isdigit() and 1 <= int(raw) <= len(choices):
+                return choices[int(raw) - 1]
+            if raw.replace(" ", "_") in choices:
+                return raw.replace(" ", "_")
+            print("Please type one of the options or its number.")
+            continue
         elif raw in ("y", "yes", "ho", "haan", "ha", "1"):
             return True
         elif raw in ("n", "no", "nahi", "nahin", "2"):

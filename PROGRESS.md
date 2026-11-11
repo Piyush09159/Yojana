@@ -10,13 +10,13 @@ This file is the project's history, newest entry first. Read it top to bottom to
 
 | | |
 |---|---|
-| Version | v2.5 citizen experience (live deployment unverified) |
-| Last updated | 2026-10-31 |
-| Tests | 390 passed, 1 skipped, 0 failed (real PostgreSQL requires an external test server) |
-| Phase | AgentX WhatsApp hotfix: NOWEB personal LID addressing, preserved activation/voice/consent controls |
-| Schemes | 267 public scheme records; 1,008 crawl records; catalog preserved unchanged |
-| Eval | eligibility 36/36 on 12 personas; start-with 12/12; name matcher P=1.00 R=1.00 on 20 pairs (small self-labelled sets) |
-| Next task | Owner review/publication; Docker and PostgreSQL validation; EasyPanel/Vercel setup and genuine hosted inference/WAHA checks |
+| Version | v2.8 integration: refactor (v2.4 deployment, v2.5 citizen experience, WhatsApp, voice, Redis cache, scheme alerts) + scheme database + agent orchestration |
+| Last updated | 2026-11-11 |
+| Tests | 480 passed, 12 skipped offline (no network); 30/30 Postgres tests (scheme store + real-PostgreSQL case store) pass on Neon `yojana_test` |
+| Phase | refactor demo plus PostgreSQL scheme catalog (SCHEME_DATABASE_URL), five agents, background job lanes |
+| Schemes | 267 public scheme records in data/schemes.db; 270 in the Neon catalog; 523 pages queued |
+| Eval | eligibility 36/36, start-with 12/12, name matcher P=R=1.00 (small sets); Reader agent 52/53 (98%); Verifier 5/5 caught, 0/3 wrongly dropped |
+| Next task | Route the refactor conversation's extraction through the Reader agent's runner end to end; owner review of refactor2.0 |
 
 ---
 
@@ -70,6 +70,165 @@ This file is the project's history, newest entry first. Read it top to bottom to
 
 **Next:** Owner review of docs/AGENTX_DEMO.md, private EasyPanel configuration/QR pairing, real PostgreSQL and provider/mobile smoke checks, then explicit publication/deployment approval.
 
+## v2.8: 2026-11-11: refactor + scheme database + agent orchestration in one branch (refactor2.0)
+**Who:** Claude (claude-opus-5-5) with Kshitij
+**Goal:** combine the refactor demo (12 commits: v2.4 deployment, v2.5 citizen experience, voice, WhatsApp, Redis cache, scheme alerts) with feature/database-setup and feature/system_orchestration in branch refactor2.0, and verify the whole project. No commit or push (left to the owner).
+
+**Version labels:** the v2.4 and v2.5 entries dated 2026-11-11 (PostgreSQL store, agent orchestration) were written on the feature branches in parallel with refactor's v2.4/v2.5 (2026-10-29/30). They are different work; entries are kept unchanged and ordered by date.
+
+**How the merge was resolved** (merge of feature/system_orchestration, which already contains feature/database-setup; Git merged 60+ files automatically, 6 conflicted)
+- `web/conversation_api.py`, `web/waha_bridge.py`: **refactor version kept** (cases, access tokens, request-id replay, dependents, identity-correction guard, assessment, voice, LID WhatsApp). The orchestration replacement of these files was dropped. Additive hooks in conversation_api: `get_llm()` returns the Reader agent's shared client (READER_* falls back to EXTRACTOR_*; same seam the tests patch); `_short_answer()` reads short replies to single-field questions in code (no model call); `_queue_gap_search()` queues one gapfill job per profile group per day when fewer than 5 good matches; response gains `searching_more`.
+- `tests/test_conversation_v21.py`, `tests/test_dashboard.py`: refactor versions (the orchestration branch had rewritten them for the replaced API).
+- `llm/providers/openai_provider.py`: per-role timeout from llm/config; `LLM_TIMEOUT_SECONDS` (refactor) when a client has none; no SDK retry for fast roles.
+- `.env.example`, `README.md`, `PROGRESS.md`: both kept. README: refactor README plus a "Scheme database and agent orchestration" section and project-map entries.
+
+**Hidden clash fixed: two meanings of DATABASE_URL.** refactor uses it for the citizen case store (postgresql:// or sqlite:/// for offline tests); the database branch used it for the scheme catalog. The scheme store now reads **SCHEME_DATABASE_URL** (store/db.py, pg.py, migrate.py, pg_admin.py, scripts, worker, tests, docs). Both may point at the same Postgres server; their tables do not overlap.
+
+**Other fixes during integration**
+- `requirements-deploy.txt` pinned `psycopg[binary]==3.2.13` while including the lock that pins 3.3.8 (pip conflict); now pinned once in the lock.
+- `tests/conftest.py`: empties SCHEME_DATABASE_URL and DATABASE_URL at import, and removes real keys and endpoints from .env per test (OPENAI_API_KEY, OPENAI_BASE_URL, GEMINI_API_KEY, ...; JUDGE_FALLBACKS, SCOUT_MODEL, VERIFIER_MODEL). Two refactor tests failed only because a real OPENAI_BASE_URL leaked in from .env.
+- `tests/test_integration_hooks.py` (new, 5): shared Reader client, short answers by code (including inside a real conversation), gap search queued once per group and never breaking a reply.
+
+**Verified**
+- Offline: 480 passed, 12 skipped, 0 failed; network-blocked run: no attempts.
+- PostgreSQL on Neon `yojana_test`: 30/30, including refactor's real-PostgreSQL case-store test, previously never run (README: "skipped without TEST_POSTGRES_URL").
+- Engine eval unchanged: 36/36, 12/12, name matcher 1.00/1.00.
+- Live server (port 8001): `/`, `/app`, `/chat` (307), `/voice`, `/legacy`, `/docs`, `/api/health/live|ready`, `/healthz`, `/readyz`, `/api/catalog`, WAHA status (persistent: true) all respond.
+- Live conversation through the merged API (Groq): Marathi widow in Beed, 1 model call for the first message (all 8 facts right), "हो" and "नाही" read by code (0 calls), assessment complete with 5 options.
+- Live gap lane: Karnataka woman farmer -> `searching_more: true` -> worker: Scout (Groq, 8.3 s), 2 searches, 4 official pages queued; 3 disallow bots (respected), 1 dropped the connection; no new scheme.
+- Terminal chat (`python -m saathi`) on the merged code: 1 Reader call, other answers by code.
+
+**Known issues / not done**
+- The gap lane's follow-up (`notify`) reaches orchestrator conversations (terminal); /app and WhatsApp conversations live in the refactor case store. Connect `notify` to refactor's scheme-alert outbox (`web/notifications.py`, `scheme_alert_outbox`) next.
+- Two scheme caches now exist (refactor Redis/Valkey `web/public_cache.py`, orchestrator 60 s in-process cache); unify on Redis when REDIS_URL is set.
+- refactor `QUESTION_TEXT` has no Marathi/Hindi text for `residence`; the question showed in English in a Marathi conversation.
+- Port 8000 on this machine is held by an old server from the start of the session (PID 11268, pre-merge code).
+
+**Next:** owner review of refactor2.0; `git add -A`, commit and push by the owner; then notify -> scheme-alert outbox.
+
+---
+
+## v2.5: 2026-11-11: agent orchestration
+**Who:** Claude (claude-opus-5-5) with Kshitij
+**Goal:** the team's last task before deployment: a smooth flow with few failures, each agent doing one job well, clear hand-offs, the right number of agents, cheap database updates.
+
+**Before:** 8 model jobs on 4 roles, wired three ways (`web/conversation_api.py`, `web/session.py` + `saathi/investigator.py`, `saathi/chat.py`). No timeouts (Gemini took 78.5 s on one message). A new LLM client per WhatsApp message, so fallback cooldowns were forgotten. One role ("extractor") for both fast message reading and slow page reading. Exceptions ended turns. The WhatsApp reply never contained schemes. No web fallback or budgets in the user path.
+
+**Changed**
+- `agents/` (new): five agents, each one job + JSON contract + code check: Reader, Replier, Scout (replaces brainstorm + investigator analyse), Extractor, Verifier (the unused judge role). `agents/runner.run_agent` is the only place agents run and never raises: cache (hash key), lane budget, shared client, validate, deterministic degrade, token record.
+- `llm/config.py`: roles `reader`, `scout`, `verifier`, each falling back to extractor/planner/judge settings; per-role timeouts (`ROLE_TIMEOUTS`, `<ROLE>_TIMEOUT`); `FAST_ROLES` (reader, agent); `shared_llm(role)` one client per role per process.
+- `llm/providers/*`: timeouts on every provider; fast roles: Gemini thinking LOW and no SDK retry (a 429 made the SDK sleep 23 s); local models +15 s to load.
+- `llm/fallback.py`: third failure class "slow" (timeout, 504, deadline): move on at once, rest the provider 5 min. A 504 used to stop the chain. Fast roles do not wait on busy providers (`busy_tries=1`).
+- `saathi/orchestrator.py` (new): one state machine for every entry point; `short_answer.py` (yes/no/number/choice in en/hi/mr read by code; "no" -> 0 for count questions); `reply.py` (questions, top-5, details, follow-ups as code templates, translated options); `sufficiency.py` (good match = status + quality >= 30 + match >= 2; segment key); `guard.py`; `senders.py`. Loop guard: a question unanswered twice is skipped; absurd questions filtered (student at 30+, pregnancy outside 15-45 or for men).
+- `web/conversation_api.py`: thin adapter; conversations persist in the database (7 days). `web/waha_bridge.py`: calls the orchestrator with a stable hashed conversation id; **the reply now includes the schemes**; chat id kept for follow-ups.
+- `worker/` (new): `python -m worker [--once|--batch N|--status|--retry-failed]`; jobs gapfill -> extract -> notify; leases, retries (1/2/4 min), failed state kept.
+- `store/runtime.py` + `store/sql/002_agents.sql`: job queue (SKIP LOCKED), conversations, agent cache, daily budget, segment searches, coverage log; same API on SQLite; reconnect on dropped Postgres connections (Neon closes idle ones).
+- `ingest/extract.py`: `benefit_recipient` in the extraction schema (village/institution programmes not saved); field-quote check (`QUOTE_WORDS`, `rule_needs_review`, `flagged_rules`, `drop_unsupported`); Devanagari names transliterated for ids.
+- `discovery/discover.py`: Extractor and Verifier run through the runner; reports flagged/dropped/not-for-people.
+- `core/fields.py` + `schemes/geo/districts.yaml`: districts resolved by key, alias, Devanagari transliteration or sound ("bhid" -> beed, "अहिल्यानगर" -> ahmednagar).
+- `saathi/__main__.py`: `python -m saathi [--worker] [--debug]` runs on the orchestrator; `--classic` keeps the old loop.
+- `agents/eval.py` + `tests/fixtures/agent_eval/`: `python -m agents.eval --live [--pace S]`, Reader (12 messages) and Verifier (8 rules) gold sets.
+- Tests: `tests/test_orchestration.py` (54); `tests/conftest.py` defaults every role to the mock provider and no search, so no test can reach a real model (a leak to Gemini was caught by the network-blocked run and closed); two conversation tests now inject a mock Reader instead of patching removed internals.
+- Docs: `docs/AGENT_ORCHESTRATION.md` (new), README section, CLAUDE.md layout and commands, `.env.example` agent settings.
+
+**Measured**
+- Live, Karnataka worker: 1 Reader call (2,588 tokens, 3.3 s on Groq) for 7 turns; 6 answers by code; gap-fill ran (Scout + 2 searches, 9 s).
+- Offline on the real catalog, Beed SC widow: 1 Reader call for the whole conversation; top result Indira Gandhi National Widow Pension; atrocity-victim scheme gone.
+- Reader eval paced: 52/53 (98%), language 12/12. Unpaced burst: Groq 429 after 4 calls exposed the SDK sleep, missing 504 handling and a too-short local timeout; all fixed.
+- Verifier eval: 5/5 caught, 0/3 wrongly dropped (after adding implied-applicant examples to the prompt; before: 2/3 wrongly dropped).
+- Batch lane: ZP Jalgaon village-fund page rejected as not for a person (qwen saved such pages earlier).
+- **Web search finding:** Google via SerpAPI ignores `site:gov.in OR site:nic.in`, a single `site:gov.in` and `as_sitesearch` (0-2 official results in 10; 3 test searches). Gap-fill now asks for 30 results per paid search and keeps only official ones.
+
+**Tests:** 314 passed, 9 skipped (opt-in Postgres; 9/9 pass on Neon), 0 failed; network-blocked run: no attempts.
+**Eval:** as above.
+
+**Known issues / not done**
+- `/legacy` (`web/session.py` + investigator) still runs its own flow; not yet on the orchestrator.
+- Ranking reasons ("you meet 3 of its conditions") are English only.
+- Fisheries/poultry schemes still reach some top 5s: their stored rules genuinely match; needs re-extraction with the Verifier.
+- Live web search yields few official pages (above). Per-state source maps remain the better source.
+- 3 village-fund records saved by the earlier qwen run remain in Neon; 1 batch job failed from before the fixes (`--retry-failed`).
+
+**Next:** move /legacy onto the orchestrator; drain the queue with `python -m worker --batch`; re-extract low-quality schemes through the Verifier.
+
+---
+
+## v2.4: 2026-11-11: PostgreSQL store with derived "who is it for" tables
+**Who:** Claude (claude-opus-5-5) with Kshitij
+**Goal:** Phase 0 of the all-India database plan: a PostgreSQL store with the same functions as the SQLite one, structured tables derived from each scheme, a quality score, and a one-to-one import of the existing catalog. Team decisions: all of India, WhatsApp (WAHA), 5 schemes per user, free LLM services or a local GPU.
+
+**Changed**
+- `store/sqlite.py` (new): the SQLite store, moved unchanged from `store/db.py`.
+- `store/db.py`: now a switch. Every function delegates to SQLite, or to PostgreSQL when `DATABASE_URL` is set; chosen per call, so callers (`from store import db`) are unchanged. Loads `.env` itself so `python -m store` sees `DATABASE_URL`.
+- `store/pg.py` (new): PostgreSQL store, same functions and return values as SQLite (`load_catalog`, `save_scheme`, `find_duplicate`, `queue_urls`, `mark_url`, ...). Saving writes the scheme dict (`scheme.data`, JSONB) and all derived rows in one transaction. Unknown districts in scraped schemes are registered (`auto_added`) instead of rejected. Dates are encoded like SQLite (`default=str`).
+- `store/sql/001_init.sql` (new): schema. Geography (`geo_state`, `geo_district`); `scheme` + `scheme_rule`, `scheme_target`, `scheme_name`, `scheme_unmapped`, `scheme_document`, `scheme_source`; `source_site`, `crawl_url` (with priority and insertion order); orchestration tables for Phase 3 (`coverage_event`, `segment_search`, `job`, `conversation`, `review_task`); `pg_trgm` indexes on names.
+- `store/derive.py` (new, pure): scheme dict -> rule, target, name, unmapped, document and source rows. Targets come from the rules that let people in (gender=female, occupation=farmer, social_category=sc, age_band, income_limit); exclusions and state/district scope are skipped, as in `core/ranking.py`. Topic categories come from a fixed keyword list.
+- `core/quality.py` (new, pure): 0-100 record quality (qualifying rules, checkable share, benefit amount, documents, how to apply, verified, freshness).
+- `store/pg_admin.py` (new) + `store/migrate.py`: `python -m store pg-init` (apply SQL files once each, seed 36 states/UTs and the Maharashtra districts), `pg-import` (copy schemes and crawl records from SQLite one to one), `quality` (report).
+- `scripts/check_pg_parity.py` (new): compares the full catalog on both backends (every scheme dict, scoped loads, stats, engine statuses/scores/start-with for the 12 personas and 4 sample profiles).
+- `tests/test_derive_quality.py` (new, 18 tests). `tests/test_pg_store.py` (new, 9 tests, opt-in via `TEST_DATABASE_URL`, database name must end in `_test`).
+- `tests/conftest.py`: sets `DATABASE_URL=""` so no test can write to a real Postgres when `.env` has one.
+- `requirements.txt`, `requirements.lock.txt`: `psycopg[binary]` 3.3.8 (+ `tzdata` on Windows).
+
+**Decisions**
+- PostgreSQL over MongoDB: the data is relational (geography, rules, targets, sources, dedupe merges, coverage analytics); JSONB keeps the flexible scheme document the engine reads, so `core/` is unchanged.
+- The structured tables are derived in code from the dict, never edited separately, so they cannot drift.
+- The "who is it for" index is derived from quote-checked rules, not tagged by an LLM (the LLM must not decide eligibility).
+- SQLite stays the default; tests keep using it. Postgres is opt-in until parity is proven on the real catalog.
+
+**Measured on the current catalog (derive over all 267 schemes)**
+- Levels: 67 central, 180 state, 20 district. Quality median 48/100; 54 schemes score under 30.
+- Most common targets: social_category=sc 46, residence=rural 38, is_student 37, st 31, is_bpl 29; gender=female only 13.
+- 63 schemes yield no target (no qualifying rule) and 56 no topic category.
+
+**Tests:** 255 passed, 9 skipped (Postgres, opt-in), 0 failed (`python -m pytest -q`)
+**Eval:** unchanged
+
+**Known issues / not done**
+- Not yet run against a live Postgres: waiting for `DATABASE_URL` in `.env` (the password stays with the user).
+- Local extraction benchmark (`qwen2.5:7b-instruct`, `nemotron-3-nano` on an RTX 5060 8 GB) waits for `OLLAMA_CONTEXT_LENGTH=8192` and an Ollama restart. Earlier note (v0.8, other machine): qwen2.5:7b took 112-525 s per page with schema errors.
+- Dedupe still compares only within the same state and district, and token_set_ratio over-matches subsets ("pension scheme" vs "widow pension scheme"); fix planned for Phase 2.
+- Full LGD district list (about 780, official codes) not imported yet.
+
+**Next:** `python -m store pg-init`, `python -m store pg-import`, `python scripts/check_pg_parity.py`; then the opt-in Postgres tests; then the local model benchmark.
+
+**Update, same day: live on Neon, local model, end-to-end test**
+- Live database: Neon PostgreSQL (Singapore). `pg-init` applied; `pg-import` copied 267 schemes + 1,008 crawl records in 6 m 55 s (about a dozen round trips per scheme). `scripts/check_pg_parity.py`: PARITY OK on every check (all scheme dicts, 7 scopes, stats, engine results for 12 personas + 4 sample profiles).
+- Fixed: index `scheme_source` clashed with the table of the same name (`store/sql/001_init.sql`, renamed `scheme_by_url`).
+- Fixed: `Discoverer` crashed at start-up without `SEARCH_PROVIDER`, which blocked `--extract-queued` (no search needed). `discovery/search.py` `NoSearch` stand-in; searches now fail with a clear SearchError instead.
+- Local model: Ollama ran with a 4,096-token context despite `OLLAMA_CONTEXT_LENGTH`, cutting the ~5.7k-token extraction prompt. Created `qwen2.5-7b-8k` and `nemotron-3-nano-8k` (Modelfile `PARAMETER num_ctx 8192`). qwen2.5 7B on RTX 5060: 4k context 58 s/page, 4/5 valid; **8k context 13 s/page, 5/5 valid, 5/5 names right**. Nemotron benchmark stopped (not measured).
+- **Rule accuracy is the weak point:** on the Kerala old-age pension page qwen kept the 2 right rules plus 3 wrong ones (`is_bpl=true` from an "other pension" exclusion, `residence=rural` from "residing within Kerala", `family_size>=1` from "must be destitute"). They pass the quote check because the sentence exists. `scripts/bench_extract.py` (new) now scores rule agreement with the reference and lists extra rules.
+- `scripts/try_flow.py` (new): one message through every step (privacy guard, LLM read, validation, database scope, engine, top 5, sufficiency, gap log in `coverage_event`, optional `--update N` from the queue).
+  - Karnataka construction worker (English): 8 facts right; 68 schemes in scope; 1 good match; gap logged. `--update 3` read 3 queued pages: Neon 267 -> 270, queue 526 -> 523.
+  - Maharashtra SC widow (Marathi): language mr; 243 schemes in scope; 5/5 "good".
+- **Problems found by the live test (fix before scaling extraction):**
+  1. District "बीड" became `bhid`, not `beed`, so Beed's district schemes were not loaded. Districts need matching against the geography table and its aliases.
+  2. qwen read "शेतमजूर" (farm labourer) as `occupation=farmer` and added `owns_cultivable_land=true`.
+  3. Top 5 contained wrong fits: an atrocity-victim scheme (only the SC rule could be checked) and a Rs 25 lakh fodder-business project counted as Rs 8.3 lakh a year. The "good match" test (status + quality >= 30) is too loose; it also needs match strength and no unchecked condition that is clearly about someone else.
+  4. The 3 pages read by `--update` were village-panchayat fund programmes, not citizen schemes (quality 5, 35, 5; one with a wrong `occupation=farmer` rule). Extraction needs a "benefits a person" check before saving.
+  5. Scheme ids from Devanagari names become digits or hashes (`5__maharashtra`); slugs need transliteration.
+  6. The bot would ask a 34-year-old worker whether he is a student; age should suppress that question.
+  7. Each catalog load from Neon takes about 2-2.6 s; cache by `db.version()` before WhatsApp traffic.
+
+**Tests:** 255 passed, 9 skipped (Postgres, opt-in), 0 failed.
+**Next:** fixes 1-4 above (district matching, field-quote consistency check in `ingest/extract.py`, stricter "good match", personal-benefit filter), then bulk extraction of the 523 queued pages with `qwen2.5-7b-8k`.
+
+**Update: cloud keys, live web search, cost per query**
+- `.env`: the Groq key was in `GROQ_API_KEY`, which the code does not read; copied into `OPENAI_API_KEY` with `OPENAI_BASE_URL=https://api.groq.com/openai/v1`. Extractor on Gemini, fallbacks Groq then local qwen; judge on Groq (different vendor from the extractor).
+- `scripts/try_flow.py --web N`: live gap-fill through `Discoverer.discover_for_profile` (SerpAPI, official sites only, saved to Neon). `scripts/query_cost.py` (new): tokens per model from `logs/llm_calls.jsonl`, cost only with prices given on the command line.
+- Latency: Gemini `gemini-3.8-flash` 78.5 s to read one message (6.2 s for a tiny call); Groq `openai/gpt-oss-120b` 2.6 s. **Message reading must be on Groq**; Gemini only for background page extraction.
+- Karnataka worker with `--web 2`: 2 SerpAPI searches, 2 KLWB pages read, both rejected as "not a single-scheme page", 0 new schemes. 4 Gemini calls, 12,792 in / 917 out tokens, 284 s.
+- Maharashtra widow on Groq: district `beed` and occupation `agricultural_labourer` right (qwen gave `bhid` and `farmer` + land). 1 call, 2,196 in / 960 out tokens. 249 schemes in scope, 5/5 "good", but the top 5 still holds wrong fits: PM Matsya Sampada (fisheries), the atrocity-victim scheme, and a PMAY-Gramin record whose source is a ZP Amravati biogas page (name and source mismatch). Engine and data fixes, not LLM.
+- Cost: free tiers, so $0 per query. One database-answered query is about 3.2k Groq tokens; a query that triggers web search is about 14k Gemini tokens and 2 SerpAPI searches (of 250 a month).
+
+**Update: review and clean-up before push**
+- `store/pg.py`: a cached connection was reused forever; Neon suspends idle databases and drops their connections, so the first call after a quiet spell would fail. Now a broken connection is replaced, every store function reconnects and retries once on `OperationalError` (all are safe to repeat), and connecting times out after 10 s.
+- `tests/test_store_switch.py` (new, 5 tests): backend switch, password-free `db_path`, retry once then raise, discovery without a search key.
+- Opt-in Postgres tests run for the first time: 9/9 pass against a separate Neon database `yojana_test` (the real data is in `neondb`).
+- Whole suite run with all outbound sockets blocked: no network calls, even with real keys in `.env`.
+- `.env.example`: `DATABASE_URL`, `TEST_DATABASE_URL`; note that Groq goes in `OPENAI_API_KEY` + `OPENAI_BASE_URL` (`GROQ_API_KEY` is not read). README: PostgreSQL section and the live-test scripts. CLAUDE.md: store layout, new commands, field count 41 (was 46).
+- `core/ranking.py` docstring: formula corrected to `1*match + 2*value_points + confidence - effort` (the code was right).
+- `demo.py`: `ask()` could not answer "choice" questions, and the first question (state) is one; options are now listed and accepted by name or number.
 ## v2.5: 2026-10-30: automatic assessment and resilient voice
 **Who:** Codex
 **Goal:** Complete useful assessments without catalog exhaustion and restore authorized results reliably.

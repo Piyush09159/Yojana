@@ -2,6 +2,14 @@
 
 No official application submission or personal identification data collected.
 DATABASE_URL enables persistent cases. Without it, development sessions use RAM.
+
+Agent orchestration hooks (agents/, saathi/, worker/), all additive to this flow:
+  get_llm()          the Reader agent's shared client (llm/config.shared_llm): per-role timeout and
+                     a fallback chain that remembers capped/busy/slow providers across messages
+  _short_answer()    a short reply to the pending question ("ho", "45", "2") is read by code
+                     (saathi/short_answer.py), with no model call
+  _queue_gap_search() fewer than 5 good matches -> one gapfill job per profile group per day for the
+                     background lane (python -m worker), which grows the scheme catalog
 """
 from __future__ import annotations
 
@@ -19,8 +27,8 @@ from core.fields import validate_profile
 from core.questions import question_candidates
 from discovery.catalog import load_catalog
 from saathi.shortlist import build_shortlist
-from saathi.understand import understand
-from llm import get_llm
+from saathi.understand import Understood, understand
+from llm import shared_llm
 from . import case_store, inference
 from .access import owner, issue, require_memory
 from .privacy import redact
@@ -110,6 +118,60 @@ def _store(session_id, state):
             raise HTTPException(503, "Demo is at capacity; try later")
         state["updated"] = now
         _sessions[session_id] = state
+
+
+def get_llm(role: str = "reader"):
+    """The model client that reads citizen messages: the Reader agent's role, one shared client per
+    process, so a provider found rate-limited stays skipped on the next message instead of being
+    tried again. READER_* settings fall back to EXTRACTOR_* when unset (llm/config.py), so an
+    existing deployment behaves as before. Kept as a module function so tests can replace it."""
+    return shared_llm("reader")
+
+
+def _short_answer(pending, text, lang):
+    """A short reply to the question just asked, read by code instead of a model call:
+    "ho"/"yes"/"नाही", "45", "40 hazar", "2" (a numbered choice), "महिला". Only single-field
+    questions; anything longer or unclear returns None and goes to the model as before. The value
+    is still validated by core/fields like any extracted fact."""
+    if not pending or len(pending.get("fields") or []) != 1:
+        return None
+    from core.fields import FieldError, check_value
+    from saathi.short_answer import parse
+    got = parse(pending, text, lang)
+    if got.kind != "value":
+        return None
+    field = pending["fields"][0]
+    try:
+        value = check_value(field, got.value)
+    except FieldError:
+        return None
+    return Understood(language=lang or "en", facts={field: value}, intent="give_info")
+
+
+def _queue_gap_search(profile, shortlist, catalog):
+    """Fewer than 5 good matches for this person: queue one background web search for people like
+    them (saathi/sufficiency.segment), at most once a day per profile group. The worker
+    (python -m worker) reads the official pages found into the scheme catalog. Never blocks or
+    breaks a reply: any failure here only means no search is queued."""
+    try:
+        if not profile.get("state") or not shortlist:
+            return False
+        from saathi.sufficiency import TARGET, pick, segment
+        from store import runtime
+        _, good = pick(shortlist, catalog, TARGET)
+        if good >= TARGET:
+            return False
+        key, dims = segment(profile)
+        if runtime.segment_searched_within(key, runtime.DAY):
+            return False
+        public = {k: v for k, v in profile.items() if not str(k).startswith("_")}
+        job = runtime.job_enqueue("gapfill", {"segment": key, "profile": public}, dedupe_key=f"gapfill:{key}")
+        if job is not None:
+            runtime.segment_mark(key, 0)
+            runtime.coverage_log(key, dims, good, web_triggered=True)
+        return job is not None
+    except Exception:
+        return False
 
 
 def _shortlist_public(profile, catalog):
@@ -210,18 +272,21 @@ def _conversation(body, access_token, trusted, tx):
     state['intent_context'] = intent_from_text(text, state.get('intent_context'))
 
     started=time.perf_counter()
-    try:
-        llm = get_llm("extractor")
-        parsed = understand(llm, text, state["pending"],
-                            {'facts': state['profile'], 'recent_messages': state.get('history', [])[-10:]})
-        inference.succeeded(llm)
-        record('inference',time.perf_counter()-started)
-    except Exception as exc:
-        # Don't falsely record a fact if the hosted service is down.
-        code = inference.failure(exc)
-        record('inference',time.perf_counter()-started,'error')
-        raise HTTPException(429 if code == 'rate_limited_or_quota_exhausted' else 503,
-                            {'code': code, 'message': 'Language service unavailable. Check the model configuration.'}) from exc
+    # A short reply to the pending question is read by code: no model call, no inference metric.
+    parsed = _short_answer(state.get("pending"), text, state.get("lang"))
+    if parsed is None:
+        try:
+            llm = get_llm("reader")
+            parsed = understand(llm, text, state["pending"],
+                                {'facts': state['profile'], 'recent_messages': state.get('history', [])[-10:]})
+            inference.succeeded(llm)
+            record('inference',time.perf_counter()-started)
+        except Exception as exc:
+            # Don't falsely record a fact if the hosted service is down.
+            code = inference.failure(exc)
+            record('inference',time.perf_counter()-started,'error')
+            raise HTTPException(429 if code == 'rate_limited_or_quota_exhausted' else 503,
+                                {'code': code, 'message': 'Language service unavailable. Check the model configuration.'}) from exc
 
     cleaned, _ = validate_profile(parsed.facts)
     if getattr(parsed,'requested_category',None) in ('pension','income','education','agriculture','health','housing','employment'):
@@ -277,6 +342,8 @@ def _conversation(body, access_token, trusted, tx):
     else:
         state["pending"] = None
         answer = final_answer(decision)
+    # Results are final: if they are thin, the background gap lane looks for more (never blocks).
+    searching_more = (not q) and _queue_gap_search(state['profile'], shortlist, catalog)
     decision.pop('next_candidate',None)
     decision['question_count']=state.get('question_count',count)
     state['assessment']=decision
@@ -290,6 +357,7 @@ def _conversation(body, access_token, trusted, tx):
                 QUESTION_TEXT.get(q['field'],{}).get(state['lang']) or
                 (not q.get('synthetic') and q.get('text_'+state['lang']))) else 'en',
             'text_fallback': state['lang'] not in ('en','hi','mr'),
+            'searching_more': bool(searching_more),
             "disclaimer": "Recommendations are informational; verify unreviewed schemes against official sources."})
 
 

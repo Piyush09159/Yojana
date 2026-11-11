@@ -12,7 +12,7 @@ A scheme is ranked on four things, all computed in code so the order can be expl
               some conditions left for them to check.
   effort      how hard it is to claim: documents to gather, and the extractor's effort guess.
 
-score = 3*match + value_points + confidence - effort
+score = 1*match + 2*value_points + confidence - effort   (MATCH_WEIGHT, VALUE_WEIGHT below)
 
 `start_with` is the single best one (the blueprint warns that a long list causes fewer
 applications, not more). `lesser_known` is the same ranking limited to schemes people rarely

@@ -13,3 +13,5 @@ lxml>=5.0
 pypdf>=4.0
 fastapi>=0.110
 uvicorn>=0.29
+# PostgreSQL store (store/pg.py), used when DATABASE_URL is set
+psycopg[binary]>=3.2
