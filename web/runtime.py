@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import os
 import time
+from urllib.parse import urlparse
 from collections import OrderedDict
 from fastapi.responses import JSONResponse
 from . import case_store, inference
@@ -20,6 +21,13 @@ def validate_configuration():
     scheme_url = os.getenv('SCHEME_DATABASE_URL', '').strip()
     if scheme_url and not scheme_url.startswith(('postgresql://', 'postgres://')):
         raise RuntimeError('SCHEME_DATABASE_URL must be a postgresql:// URL (or unset for the bundled SQLite catalog)')
+    stt_choice = os.getenv('STT_PROVIDER', '').strip().lower()
+    if stt_choice and stt_choice not in ('local', 'sarvam', 'off'):
+        raise RuntimeError('STT_PROVIDER must be local, sarvam or off')
+    if stt_choice == 'local':
+        stt_url = urlparse(os.getenv('LOCAL_STT_URL', ''))
+        if stt_url.scheme not in ('http', 'https') or not stt_url.hostname or stt_url.username or stt_url.password:
+            raise RuntimeError('STT_PROVIDER=local requires LOCAL_STT_URL=http://<private stt service>:<port>')
     if not case_store.auth_required():
         raise RuntimeError('Production requires SESSION_AUTH_REQUIRED=true')
     origins = [v.strip() for v in os.getenv('APP_ORIGINS', '').split(',') if v.strip()]

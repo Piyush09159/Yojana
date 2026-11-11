@@ -393,8 +393,11 @@ def test_voice_readiness_lists_missing_settings_by_name(monkeypatch):
     monkeypatch.setenv('SARVAM_STT_ENABLED', 'false')
     monkeypatch.delenv('SARVAM_API_KEY', raising=False)
     monkeypatch.setattr('shutil.which', lambda _: '/usr/bin/ffmpeg')
+    monkeypatch.delenv('STT_PROVIDER', raising=False)
     missing = waha.voice_missing()
-    assert 'SARVAM_STT_ENABLED=true' in missing and 'SARVAM_API_KEY' in missing
+    assert 'STT_PROVIDER=local|sarvam' in missing                # no speech provider chosen
+    monkeypatch.setenv('SARVAM_STT_ENABLED', 'true')
+    assert 'SARVAM_API_KEY' in waha.voice_missing()               # legacy Sarvam opt-in needs its key
     assert all('fixture' not in name for name in missing)
 
 

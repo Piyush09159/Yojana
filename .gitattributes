@@ -12,3 +12,4 @@
 *.db binary
 *.pdf binary
 *.png binary
+*.wav binary

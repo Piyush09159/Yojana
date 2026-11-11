@@ -1,0 +1,13 @@
+# yojana-stt image only (Dockerfile.stt). Versions are the ones benchmarked on 2026-11-11 (CPU, int8).
+# Not installed into yojana-api/yojana-worker; tests for stt_service run without these (fake engine).
+faster-whisper==1.2.1
+ctranslate2==4.9.0
+onnxruntime==1.31.1
+av==19.0.2
+numpy==2.5.4
+tokenizers==0.23.3
+huggingface_hub==2.4.0
+fastapi==0.162.0
+starlette==1.10.0
+uvicorn==0.54.0
+anyio==4.15.1

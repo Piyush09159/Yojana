@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .conversation_api import Message, conversation
-from . import case_store, notifications
+from . import case_store, notifications, speech
 from .privacy import redact
 from .channel_security import seal, unseal
 from .diagnostics import emit
@@ -67,12 +67,13 @@ VOICE_FAILURE = {
                   'mr':'तुमच्या व्हॉइस नोटमध्ये ओळख, बँक किंवा फोन क्रमांक वाटला, म्हणून तो वापरला नाही. कृपया क्रमांकाशिवाय पुन्हा पाठवा.'},
 }
 _FAILURE_KIND = {'VOICE_TOO_LONG': 'too_long', 'SARVAM_STT_DISABLED': 'unavailable', 'VOICE_BUSY': 'unavailable',
+                 'STT_DISABLED': 'unavailable', 'LOCAL_STT_DISABLED': 'unavailable',
                  'VOICE_SENSITIVE_NUMBER': 'sensitive'}
 
 
 def voice_failure(lang, code=None, detail=None):
     kind = _FAILURE_KIND.get(code, 'generic')
-    if code == 'SARVAM_STT_FAILED' and detail not in ('invalid_transcript', 'speech_unsupported_request'):
+    if code in ('SARVAM_STT_FAILED', 'LOCAL_STT_FAILED') and detail not in ('invalid_transcript', 'speech_unsupported_request'):
         kind = 'unavailable'            # provider down, capped, rate-limited or unauthorised
     texts = VOICE_FAILURE[kind]
     return texts.get(lang, texts['en'])
@@ -88,6 +89,25 @@ def _remember_transcript(event_id, text, language):
         _transcripts[event_id] = (time.monotonic() + 900, text, language)
         while len(_transcripts) > 64:
             _transcripts.popitem(last=False)
+
+
+_inflight: set = set()
+
+
+def _claim_transcription(event_id):
+    """One transcription per event at a time. Local STT takes 8-15 s, so a WAHA webhook retry can
+    arrive while the first copy is still on the CPU; it is told to come back later (HTTP 503) and then
+    finds the cached transcript or the finished event. Single API process (deploy/entrypoint.py)."""
+    with _transcripts_lock:
+        if event_id in _inflight:
+            return False
+        _inflight.add(event_id)
+        return True
+
+
+def _release_transcription(event_id):
+    with _transcripts_lock:
+        _inflight.discard(event_id)
 
 
 def _recall_transcript(event_id):
@@ -155,10 +175,13 @@ def voice_missing():
         'WAHA_HMAC_KEY(>=32)': len(os.getenv('WAHA_HMAC_KEY', '')) >= 32,
         'SESSION_SIGNING_KEY(>=32)': len(os.getenv('SESSION_SIGNING_KEY', '')) >= 32,
         'DATABASE_URL': case_store.enabled(),
-        'SARVAM_STT_ENABLED=true': os.getenv('SARVAM_STT_ENABLED', 'false').lower() == 'true',
-        'SARVAM_API_KEY': bool(os.getenv('SARVAM_API_KEY')),
+        'STT_PROVIDER=local|sarvam': (provider := speech.stt_provider()) != 'off',
         'ffmpeg': bool(shutil.which(os.getenv('FFMPEG_BINARY', 'ffmpeg'))),
     }
+    if provider == 'local':
+        checks['LOCAL_STT_URL'] = bool(os.getenv('LOCAL_STT_URL'))
+    elif provider == 'sarvam':
+        checks['SARVAM_API_KEY'] = bool(os.getenv('SARVAM_API_KEY'))
     return [name for name, ok in checks.items() if not ok]
 
 
@@ -257,6 +280,7 @@ def persistent_event(body):
     media_error = media_detail = None
     media_version = None
     media_language = None
+    media_hint = None
     if p.get('hasMedia'):
         with case_store.transaction(lock) as pre:
             prior = pre.execute('SELECT * FROM waha_events WHERE id=?', (event_id,)).fetchone()
@@ -266,7 +290,12 @@ def persistent_event(body):
                     emit('WAHA_WEBHOOK_IGNORED', event=event_id, detail='not_opted_in', source='voice')
                     return {'status':'not_opted_in'}
                 media_version = mapping['updated_at']
+                hint_row = pre.execute('SELECT language FROM channel_languages WHERE chat_hash=?', (chat_hash,)).fetchone()
+                media_hint = hint_row['language'] if hint_row and hint_row['language'] in ('en', 'hi', 'mr') else None
         if not prior:
+            if not _claim_transcription(event_id):
+                emit('WAHA_WEBHOOK_IGNORED', event=event_id, detail='in_flight_retry', source='voice')
+                raise HTTPException(503, 'Voice note is still being processed')
             started = time.monotonic()
             cached = _recall_transcript(event_id)
             try:
@@ -274,11 +303,12 @@ def persistent_event(body):
                     text, media_language = cached
                 else:
                     from .waha_media import transcribe
-                    transcript = transcribe(p.get('media'))
+                    transcript = transcribe(p.get('media'), media_hint)
                     text, media_language = transcript['text'], transcript['language']
+                    source = transcript.get('provider', 'sarvam')
                     _remember_transcript(event_id, text, media_language)
                 emit('VOICE_TRANSCRIPT_READY', event=event_id, language=media_language,
-                     source='cache' if cached else 'sarvam', ms=int((time.monotonic() - started) * 1000))
+                     source='cache' if cached else source, ms=int((time.monotonic() - started) * 1000))
             except Exception as exc:
                 # Any failure here becomes a localized text reply, never silence or a retry loop
                 # that would download and pay for the same note again.
@@ -287,6 +317,8 @@ def persistent_event(body):
                 emit(media_error, event=event_id, stage='transcribe', status=getattr(exc, 'status', None),
                      detail=getattr(exc, 'detail', None) or type(exc).__name__,
                      ms=int((time.monotonic() - started) * 1000), **(getattr(exc, 'flags', None) or {}))
+            finally:
+                _release_transcription(event_id)
     with case_store.transaction(lock) as tx:
         event = tx.execute('SELECT * FROM waha_events WHERE id=?', (event_id,)).fetchone()
         if event and event['chat_hash'] != chat_hash:
