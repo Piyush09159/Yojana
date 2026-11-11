@@ -42,6 +42,7 @@ from .waha_bridge import router as waha_router
 from .rescue_api import router as rescue_router
 from .cases import router as cases_router
 from .voice import router as voice_router
+from .bolna import router as bolna_router  # NEW
 from .frontend import decorate
 from . import case_store, runtime, public_cache
 from .access import owner, issue, require_memory
@@ -86,6 +87,7 @@ def create_app(planner=None, extractor=None, agent=None, discoverer_factory: Cal
     app.include_router(rescue_router)
     app.include_router(cases_router)
     app.include_router(voice_router)
+    app.include_router(bolna_router)  # NEW
     sessions: dict[str, WebSession] = {}
     session_cache_lock = threading.RLock()
     llms: dict[str, Any] = {"planner": planner, "extractor": extractor, "agent": agent}

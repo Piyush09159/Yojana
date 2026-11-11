@@ -83,7 +83,13 @@ def install(app):
     async def boundaries(request, call_next):
         path = request.url.path
         if path.startswith('/api/'):
-            max_body = 750000 if path == '/api/voice/stt' else 131072 if path == '/api/webhooks/waha' else 32768
+            # CHANGED: the Bolna webhook can carry a transcript, so it gets the larger limit.
+            if path == '/api/voice/stt':
+                max_body = 750000
+            elif path == '/api/webhooks/waha' or path.startswith('/api/bolna/webhook/'):
+                max_body = 131072
+            else:
+                max_body = 32768
             length = request.headers.get('content-length', '0')
             try:
                 if int(length) > max_body:
