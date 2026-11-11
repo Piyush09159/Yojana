@@ -12,11 +12,29 @@ This file is the project's history, newest entry first. Read it top to bottom to
 |---|---|
 | Version | v2.8 integration: refactor (v2.4 deployment, v2.5 citizen experience, WhatsApp, voice, Redis cache, scheme alerts) + scheme database + agent orchestration |
 | Last updated | 2026-11-11 |
-| Tests | 521 passed, 13 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL (not run in the 2026-11-11 audit) |
+| Tests | 563 passed, 13 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL (not run in the 2026-11-11 audit) |
 | Phase | refactor demo plus PostgreSQL scheme catalog (SCHEME_DATABASE_URL), five agents, background job lanes |
 | Schemes | 267 public scheme records in data/schemes.db; 270 in the Neon catalog; 523 pages queued |
 | Eval | eligibility 36/36, start-with 12/12, name matcher P=R=1.00 (small sets); Reader agent 52/53 (98%); Verifier 5/5 caught, 0/3 wrongly dropped |
 | Next task | Review/merge fix/neon-worker-voice; run docs/EASYPANEL_NEON_DEPLOYMENT.md (pg-status first), deploy yojana-worker, live voice-note round trip |
+
+---
+
+## P0: WAHA_MEDIA_UNTRUSTED on production voice notes: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `fix/neon-worker-voice` on top of `539fdb7`. Not committed, pushed or deployed.
+
+**Symptom (EasyPanel logs):** `WAHA_WEBHOOK_RECEIVED source=voice` → `WAHA_MEDIA_UNTRUSTED detail="media.url origin or path not allowed"` → reply `transcription_failed`.
+
+**Analysis (WAHA 2026.10.1 source):** WAHA sets `media.url` to `<WAHA config.baseUrl>/api/files/<session>/<message.id>.<ext>`. `baseUrl` is WAHA's **own** `WAHA_BASE_URL`, or `http://localhost:3000` when that is unset (trailing slash stripped). No query and no encoding. The path shape already passed. The old validator compared `scheme://netloc` exactly against the backend's `WAHA_BASE_URL` and `WAHA_MEDIA_ORIGINS`, so WAHA's default `localhost:3000` origin and its public domain were both rejected. Explicit default ports and path prefixes were rejected too. The old error did not say which check failed.
+
+**Changes:** web/waha_media.py: validation split into named checks (scheme, userinfo, query, fragment, origin, path_prefix, encoded_separator, traversal, session, path_depth, filename). Origins are compared as (scheme, host, port) with default ports filled in. `WAHA_MEDIA_ORIGINS` entries may carry a path prefix. WAHA's built-in default origin `http://localhost|127.0.0.1:3000` (or the base port) is trusted. The download still always goes to the backend's `WAHA_BASE_URL` with only the validated `/api/files/...` path, with no redirects, 8 s and 2 MB. Filenames may also contain `:+=`. web/diagnostics.py and web/waha_bridge.py: `WAHA_MEDIA_UNTRUSTED` now logs `check`, `scheme`, `origin_kind` (base/media_origins/waha_default/localhost/private/public), `host_match` and `port_match`. It never logs the URL, host or file name. docs/WHATSAPP_VOICE_DEBUG.md updated.
+
+**Tests:** 40 new or changed in tests/test_voice_pipeline.py (real NOWEB and @lid URLs under 7 base/advertised combinations; 18 malicious URLs, each rejected by its named check; the diagnostic line is free of URL, host, file name and phone number). Targeted: 129 passed, 4 skipped. Full suite: 563 passed, 13 skipped (after SSRF review hardening: only %40 encoding allowed, malformed ports rejected, localhost-advertised URL proven to fetch from WAHA_BASE_URL, redirects not followed).
+
+**CI fix:** `test_smoke_import_list_imports` failed on GitHub Actions (`No module named 'redis'`). CI installs only requirements.lock.txt, while redis is in requirements-deploy.txt (image only). The test now imports project packages and installed modules, and for missing third-party modules it checks that they are pinned in a requirements file the Dockerfile installs. Verified with redis blocked.
+
+**Not verified live:** which check production hit. If the redeployed log shows `check=origin origin_kind=public`, set `WAHA_MEDIA_ORIGINS` to WAHA's public origin (see the voice debug doc).
 
 ---
 
