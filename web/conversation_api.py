@@ -25,7 +25,8 @@ from pydantic import BaseModel, Field
 
 from core.fields import validate_profile
 from core.questions import question_candidates
-from discovery.catalog import load_catalog
+# Postgres: in-memory TTL copy (discovery/catalog.cached_catalog); SQLite: read each time as before.
+from discovery.catalog import cached_catalog as load_catalog
 from saathi.shortlist import build_shortlist
 from saathi.understand import Understood, understand
 from llm import shared_llm

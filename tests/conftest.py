@@ -60,6 +60,9 @@ def _isolate_side_effects(monkeypatch, tmp_path, seed_db):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
     monkeypatch.setenv("SEARCH_PROVIDER", "")          # discovery without a test search: no web search
     reset_shared()
+    # In-process memories keyed by WhatsApp message id: tests reuse ids, production never does.
+    from web import waha_bridge
+    waha_bridge._transcripts.clear()
     test_db = tmp_path / "schemes.db"
     shutil.copy(seed_db, test_db)
     monkeypatch.setenv("SCHEME_DB", str(test_db))

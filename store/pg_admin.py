@@ -1,5 +1,6 @@
 """Set up and fill the PostgreSQL scheme database.
 
+    python -m store pg-status             read-only: applied/pending migrations and row counts
     python -m store pg-init               apply store/sql/*.sql (once each) and seed the geography
     python -m store pg-import [sqlite]    copy every scheme and crawl record from SQLite (default
                                           data/schemes.db), one to one, keeping ids; safe to re-run
@@ -59,6 +60,37 @@ def init_schema(log=print) -> list[str]:
         log("  schema up to date")
     seed_geography(log)
     return applied
+
+
+def migration_status(log=print) -> dict:
+    """Read-only: which store/sql files are applied, which are pending, and how many rows the
+    tables a pending migration would drop hold. Run this before pg-init on a populated database.
+    Never writes (the session is set read-only) and never prints the connection string."""
+    conn = pg.connect()
+    conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+    try:
+        exists = conn.execute("SELECT to_regclass('schema_migration') IS NOT NULL AS ok").fetchone()["ok"]
+        done = {r["name"] for r in conn.execute("SELECT name FROM schema_migration")} if exists else set()
+        files = [p.name for p in sorted(SQL_DIR.glob("*.sql"))]
+        pending = [f for f in files if f not in done]
+        rows = {}
+        for table in ("scheme", "crawl_url", "job", "conversation", "segment_search", "agent_cache",
+                      "agent_budget", "coverage_event"):
+            if conn.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", (table,)).fetchone()["ok"]:
+                rows[table] = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+            else:
+                rows[table] = None
+    finally:
+        conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
+    log(f"  applied: {', '.join(sorted(done)) or 'none'}")
+    log(f"  pending: {', '.join(pending) or 'none'}")
+    log("  rows: " + ", ".join(f"{t}={'missing' if n is None else n}" for t, n in rows.items()))
+    risky = [t for t in ("job", "conversation", "segment_search") if rows.get(t)]
+    if "002_agents.sql" in pending and risky:
+        log(f"  STOP: 002_agents.sql would drop non-empty {', '.join(risky)} (it now refuses; back up first)")
+    elif pending:
+        log("  safe to run: python -m store pg-init (only the pending files above are applied)")
+    return {"applied": sorted(done), "pending": pending, "rows": rows}
 
 
 def seed_geography(log=print) -> tuple[int, int]:

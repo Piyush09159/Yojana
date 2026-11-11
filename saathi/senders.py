@@ -16,7 +16,9 @@ def deliver(state: dict, text: str) -> bool:
     """Try to send now. Returns True when the message left; False means "show it next turn"."""
     target = state.get("reply_to") or {}
     if target.get("channel") == "waha" and target.get("chat_id"):
-        if os.getenv("YOJANA_WAHA_ENABLED", "false").lower() != "true":
+        # Outbound follow-ups to real people are off unless explicitly enabled for this process.
+        if (os.getenv("YOJANA_WAHA_ENABLED", "false").lower() != "true"
+                or os.getenv("WORKER_OUTBOUND_ENABLED", "false").lower() != "true"):
             return False
         try:
             from web.waha_bridge import _config, _send
