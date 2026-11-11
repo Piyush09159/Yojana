@@ -10,12 +10,12 @@ import os
 import re
 from datetime import date
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 from markupsafe import Markup
 
-from .i18n import LABELS, inr, labels
+from .i18n import LABELS, labels
 from .models import Guide
 
 TEMPLATES = Path(__file__).parent / 'templates'
@@ -56,11 +56,21 @@ def _day(value: date) -> str:
     return value.strftime('%d-%m-%Y')
 
 
+def display_url(url: str) -> str:
+    """Readable form of a percent-encoded link (Devanagari slugs) for printing only; the href and
+    the QR code keep the exact URL. Falls back to the original if decoding gives odd characters."""
+    try:
+        readable = unquote(url, errors='strict') if '%' in url else url
+    except UnicodeDecodeError:
+        return url
+    return url if any(c.isspace() or not c.isprintable() for c in readable) else readable
+
+
 _env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(['html', 'j2']),
                    undefined=StrictUndefined, trim_blocks=True, lstrip_blocks=True)
 _env.filters['css_string'] = _css_string
 _env.filters['day'] = _day
-_env.filters['inr'] = inr
+_env.filters['display_url'] = display_url
 
 
 def _scheme_view(scheme, domains):

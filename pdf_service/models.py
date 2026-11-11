@@ -72,8 +72,8 @@ class Scheme(Strict):
     name_local: Text(300) | None = None          # name_hi / name_mr from the catalog, when it exists
     status: Literal[STATUSES]
     verified: bool = False                         # checked by a person (curated); False = found on a website
-    benefit: Text(1500) = ''
-    benefit_annual_inr: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
+    benefit: Text(1500) = ''                       # as published; no computed yearly amount (catalog
+                                                   # amounts mix one-time grants and yearly payments)
     conditions_met: Annotated[list[Text(400, 1)], Field(max_length=12)] = []
     check_yourself: Annotated[list[Text(600, 1)], Field(max_length=12)] = []
     missing_information: Annotated[list[Text(120, 1)], Field(max_length=20)] = []

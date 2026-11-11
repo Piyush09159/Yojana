@@ -185,6 +185,16 @@ def _cut(text, limit) -> str:
     return text if len(text) <= limit else text[:limit - 1].rstrip() + '…'
 
 
+def _unique(items) -> list[str]:
+    """Drop empty and repeated lines, keeping order (catalog rules can share one source sentence)."""
+    seen, out = set(), []
+    for item in items:
+        if item and item.casefold() not in seen:
+            seen.add(item.casefold())
+            out.append(item)
+    return out
+
+
 def _field_label(field: str, language: str) -> str:
     try:
         from core.fields import load_fields
@@ -215,7 +225,6 @@ def scheme_from_card(card: dict, scheme: dict | None = None, *, language: str = 
         last = date.fromisoformat(last).isoformat()
     except ValueError:
         last = None
-    amount = card.get('benefit_annual_inr') or scheme.get('benefit_annual_inr') or 0
     return {
         'id': str(card['id'])[:120],
         'name': _cut(card.get('name') or scheme.get('name'), 300),
@@ -223,9 +232,8 @@ def scheme_from_card(card: dict, scheme: dict | None = None, *, language: str = 
         'status': card['status'],
         'verified': bool(card.get('verified')),
         'benefit': _cut(card.get('benefit') or scheme.get('benefit_summary'), 1500),
-        'benefit_annual_inr': int(amount) if isinstance(amount, (int, float)) and 0 < amount <= 100_000_000 else None,
-        'conditions_met': [_cut(x, 400) for x in card.get('rules_met') or [] if str(x).strip()][:12],
-        'check_yourself': [_cut(x, 600) for x in card.get('check_yourself') or [] if str(x).strip()][:12],
+        'conditions_met': _unique(_cut(x, 400) for x in card.get('rules_met') or [])[:12],
+        'check_yourself': _unique(_cut(x, 600) for x in card.get('check_yourself') or [])[:12],
         'missing_information': [_cut(label(f, language), 120) for f in card.get('missing_requirements') or []][:20],
         'documents': documents[:25],
         'how_to_apply': _cut(card.get('how_to_apply') or scheme.get('how_to_apply'), 4000),

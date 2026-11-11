@@ -43,7 +43,6 @@ table.summary .local { display: block; font-size: 9pt; color: #444; }
 .badge { display: inline-block; font-size: 8.5pt; padding: 0.6mm 2mm; border-radius: 1mm; margin-bottom: 1mm; }
 .badge.ok { background: #e3f1e7; color: #1d5235; }
 .badge.warn { background: #fdecd2; color: #7a4a00; }
-.amount { color: #333; white-space: nowrap; }
 
 ul.docs { list-style: none; padding-left: 0; }
 ul.docs li { padding-left: 6mm; position: relative; break-inside: avoid; }

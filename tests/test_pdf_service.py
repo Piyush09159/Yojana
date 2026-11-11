@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from pdf_service import render as R
 from pdf_service.app import create_app, service_tokens
-from pdf_service.i18n import LABELS, inr
+from pdf_service.i18n import LABELS
 from pdf_service.models import Guide
 from pdf_service.render import RendererUnavailable, guide_html, official
 from web import pdf_api, pdf_client as PC
@@ -49,7 +49,7 @@ class FakeRenderer:
 
 def scheme(**over):
     base = {'id': 'pm_kisan', 'name': 'PM-KISAN', 'status': 'eligible', 'verified': True,
-            'benefit': 'Rs 6000 a year in three instalments', 'benefit_annual_inr': 6000,
+            'benefit': 'Rs 6000 a year in three instalments',
             'conditions_met': ['Family owns cultivable land'], 'documents': [{'name': 'Land record', 'issued_by': 'Talathi'}],
             'how_to_apply': 'Register on the portal.\nOr visit the CSC.', 'apply_url': 'https://pmkisan.gov.in/registrationform',
             'source_url': 'https://pmkisan.gov.in/', 'source_site': 'pmkisan.gov.in', 'agency': 'Ministry of Agriculture',
@@ -137,7 +137,7 @@ def test_media_type_and_size_limits():
     guide(schemes=[scheme(), scheme()]),                                # duplicate scheme
     guide(schemes=[scheme(id=f's{i}') for i in range(11)]),             # over PDF_MAX_SCHEMES
     guide(schemes=[scheme(name='bad\x00name')]),
-    guide(schemes=[scheme(benefit_annual_inr=-5)]),
+    guide(schemes=[scheme(benefit_annual_inr=6000)]),                   # no computed yearly amounts
     guide(reference='has spaces'),
     guide(deadline='2026-12-31'),                                       # no field for invented deadlines
 ])
@@ -237,8 +237,13 @@ def test_missing_steps_and_documents_say_so_instead_of_inventing():
     assert LABELS['en']['unverified'] in html
 
 
-def test_indian_grouping_and_css_strings():
-    assert [inr(n) for n in (0, 999, 1000, 120000, 12345678)] == ['₹0', '₹999', '₹1,000', '₹1,20,000', '₹1,23,45,678']
+def test_readable_links_and_css_strings():
+    encoded = 'https://www.zpbeed.gov.in/scheme/%e0%a4%86%e0%a4%b6%e0%a4%be/'
+    assert R.display_url(encoded) == 'https://www.zpbeed.gov.in/scheme/आशा/'
+    assert R.display_url('https://x.gov.in/a%20b') == 'https://x.gov.in/a%20b'           # space: keep encoded
+    assert R.display_url('https://x.gov.in/%ff') == 'https://x.gov.in/%ff'               # not UTF-8: keep
+    html = guide_html([Guide.model_validate(guide(schemes=[scheme(source_url=encoded, apply_url=None)]))])
+    assert '>https://www.zpbeed.gov.in/scheme/आशा/<' in html and f'href="{encoded}"' in html
     assert R._css_string('a"b</style>') == '"a\\22 b\\3c /style\\3e "'
 
 
@@ -322,13 +327,15 @@ def card(**over):
 def test_guide_from_cards_copies_only_catalog_facts():
     catalog = {'pm_kisan': {'name_hi': 'पीएम-किसान', 'last_verified': '2026-10-21',
                             'documents': [{'name': 'Land record', 'issued_by': 'Talathi', 'key': 'land'}]}}
-    cards = [card(), card(id='x', status='ineligible'), card(id='y', source_url='not a url'),
+    cards = [card(rules_met=['Owns land', 'Owns land', ' ', 'owns land', 'BPL']),
+             card(id='x', status='ineligible'), card(id='y', source_url='not a url'),
              card(id='z', apply_url='javascript:x', source_url='https://maharashtra.gov.in/z')]
     g = PC.guide_from_cards(cards, catalog, language='hi', reference='case-12')
     assert [s['id'] for s in g['schemes']] == ['pm_kisan', 'z']
     first, second = g['schemes']
     assert first['name_local'] == 'पीएम-किसान' and first['documents'] == [{'name': 'Land record', 'issued_by': 'Talathi'}]
-    assert first['last_verified'] == '2026-10-21'
+    assert first['last_verified'] == '2026-10-21' and 'benefit_annual_inr' not in first
+    assert first['conditions_met'] == ['Owns land', 'BPL']                # repeats from the catalog dropped
     assert len(first['missing_information']) == 1 and first['missing_information'][0] != 'annual_family_income_inr'
     assert second['apply_url'] is None
     Guide.model_validate(g)                                                # what we send is what the service accepts

@@ -30,7 +30,7 @@ This file is the project's history, newest entry first. Read it top to bottom to
 * **New `pdf_service/` microservice** (own image `Dockerfile.pdf`, `requirements-pdf.txt`, Render Blueprint `render.yaml`). FastAPI + Jinja2 + WeasyPrint 70 + Segno; same pattern as `stt_service`.
   * Endpoints: `GET /health`, `POST /api/v1/pdf/generate`, `POST /api/v1/pdf/generate-batch`, all PDF bytes.
   * `models.py`: strict pydantic contract. Unknown fields are refused; lengths and counts are capped; URLs must be absolute http(s) with no credentials; control characters are rejected; scheme ids are unique. There is no deadline field, and the `ineligible` status is refused.
-  * `i18n.py`: en/hi/mr labels. Statuses are worded as "conditions we could check". The cover says the office decides, application is free, and never share Aadhaar/OTP. Scheme content is not translated, and the guide says so. Amounts use Indian digit grouping.
+  * `i18n.py`: en/hi/mr labels. Statuses are worded as "conditions we could check". The cover says the office decides, application is free, and never share Aadhaar/OTP. Scheme content is not translated, and the guide says so.
   * `render.py` and templates:
     * Autoescaped HTML; CSS inline.
     * QR codes as inline SVG, only for https links on `gov.in`/`nic.in` (`PDF_QR_DOMAINS`).
@@ -74,7 +74,19 @@ This file is the project's history, newest entry first. Read it top to bottom to
 * `pdffonts`: Noto Sans and Noto Sans Devanagari (regular and bold) are embedded, subset and Unicode-mapped.
 * The image runs as uid 10001; its healthcheck passes on Render's `PORT`.
 
+**Live on Render (user deployed, 2026-11-11):**
+* `https://yojana-pdf.onrender.com/health` returns 200 with `auth_configured: true`.
+* A wrong token gets 401, and the real token returns the full 6-page Hindi guide.
+
+**Review of the live PDF and fixes:**
+* Removed the "about ₹X a year" line and the `benefit_annual_inr` field. The catalog amount mixes one-time grants with yearly payments, so PMAY printed "₹1,30,000 per year", which is wording we invented. Sending the field is now a 422.
+* `guide_from_cards` drops repeated or empty condition lines (NFBS showed the same sentence 3×).
+* Percent-encoded links are printed readable (`…/scheme/आशा/`); the href and the QR code keep the exact URL.
+* Results after the fixes: 37/37 offline, 7/7 real render in the image, full suite 649 passed, 14 skipped. The fixes reach Render only after the user commits and pushes.
+
 **Known limits:**
+* Copy-paste text of the Devanagari parts can come out garbled in some PDF readers: the extractable text layer for some shaped clusters is imperfect. The printed and on-screen text is correct.
+* Some catalog condition texts are cut mid-word (NFBS "…lump sum financia"; rule reasons are stored at ≤200 characters).
 * `how_to_apply` exists for about 230 of 267 schemes and documents for 107, so many guides say "check the official page".
 * Rule reasons and benefit text are English in every language, as published.
 * Engine shortlists for some personas include weak fits (for example PMGSY for a widow profile); this is an engine/catalog issue, not a PDF one.

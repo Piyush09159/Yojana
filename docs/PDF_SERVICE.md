@@ -59,8 +59,8 @@ All generation endpoints need `Authorization: Bearer <token>`, where the token i
       "name_local": "इंदिरा गांधी राष्ट्रीय वृद्धावस्था पेंशन",   // optional
       "status": "eligible",
       "verified": true,
-      "benefit": "Monthly pension ...",   // ≤1500
-      "benefit_annual_inr": 2400,         // optional, 0..100000000
+      "benefit": "Monthly pension ...",   // ≤1500, as published (no computed yearly amount: catalog
+                                          // amounts mix one-time grants and yearly payments)
       "conditions_met": ["Applicant must be 60 or older"],      // ≤12 × ≤400
       "check_yourself": [],               // ≤12 × ≤600
       "missing_information": [],          // ≤20 × ≤120

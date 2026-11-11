@@ -54,9 +54,9 @@
     <div class="badge {{ 'ok' if s.verified else 'warn' }}">{{ L.verified if s.verified else L.unverified }}{% if s.source_site %} · {{ s.source_site }}{% endif %}</div>
     <div class="status status-{{ s.status }}"><strong>{{ L.status }}:</strong> {{ L.status_text[s.status] }}</div>
 
-    {% if s.benefit or s.benefit_annual_inr %}
+    {% if s.benefit %}
     <h3>{{ L.benefit }}</h3>
-    <p>{{ s.benefit }}{% if s.benefit_annual_inr %} <span class="amount">({{ L.about_per_year.format(amount=s.benefit_annual_inr|inr) }})</span>{% endif %}</p>
+    <p>{{ s.benefit }}</p>
     {% endif %}
 
     {% if s.conditions_met %}
@@ -93,7 +93,7 @@
       {% for link in sv.links %}
       <div class="link">
         {% if link.qr %}<img src="{{ link.qr }}" alt="QR">{% endif %}
-        <div><span class="what">{{ L[link.kind] }}</span><a href="{{ link.url }}">{{ link.url }}</a>{% if link.qr %}<span class="scan">{{ L.scan }}</span>{% endif %}</div>
+        <div><span class="what">{{ L[link.kind] }}</span><a href="{{ link.url }}">{{ link.url|display_url }}</a>{% if link.qr %}<span class="scan">{{ L.scan }}</span>{% endif %}</div>
       </div>
       {% endfor %}
     </div>

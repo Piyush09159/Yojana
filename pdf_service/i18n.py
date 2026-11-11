@@ -44,7 +44,6 @@ LABELS = {
         'unverified': 'Found on an official website; not yet checked by a person',
         'agency': 'Run by',
         'benefit': 'Benefit (as published)',
-        'about_per_year': 'about {amount} a year',
         'conditions_met': 'Conditions your answers meet',
         'check_yourself': 'Check these on the official page',
         'missing': 'Information still needed',
@@ -97,7 +96,6 @@ LABELS = {
         'unverified': 'आधिकारिक वेबसाइट पर मिली; अभी किसी व्यक्ति ने नहीं जाँची',
         'agency': 'संचालक',
         'benefit': 'लाभ (जैसा प्रकाशित है)',
-        'about_per_year': 'लगभग {amount} प्रति वर्ष',
         'conditions_met': 'वे शर्तें जिन पर आपके जवाब खरे हैं',
         'check_yourself': 'इन्हें आधिकारिक पेज पर जाँचें',
         'missing': 'अभी चाहिए जानकारी',
@@ -150,7 +148,6 @@ LABELS = {
         'unverified': 'अधिकृत संकेतस्थळावर सापडली; अजून कोणत्याही व्यक्तीने तपासलेली नाही',
         'agency': 'राबवणारे',
         'benefit': 'लाभ (प्रकाशित केल्याप्रमाणे)',
-        'about_per_year': 'सुमारे {amount} दरवर्षी',
         'conditions_met': 'तुमच्या उत्तरांनुसार पूर्ण होणाऱ्या अटी',
         'check_yourself': 'या गोष्टी अधिकृत पानावर तपासा',
         'missing': 'अजून हवी असलेली माहिती',
@@ -174,18 +171,3 @@ LABELS = {
 
 def labels(language: str) -> dict:
     return LABELS.get(language, LABELS['en'])
-
-
-def inr(amount: int) -> str:
-    """Indian digit grouping: 120000 -> '₹1,20,000'."""
-    digits = str(int(amount))
-    if len(digits) > 3:
-        head, tail = digits[:-3], digits[-3:]
-        groups = []
-        while len(head) > 2:
-            groups.insert(0, head[-2:])
-            head = head[:-2]
-        if head:
-            groups.insert(0, head)
-        digits = ','.join(groups + [tail])
-    return '₹' + digits

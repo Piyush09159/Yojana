@@ -8,7 +8,6 @@
       "status": "eligible_check_manually",
       "verified": false,
       "benefit": "Rs. 1500 per month (Rs. 300 from Central Government + Rs. 1200 from State scheme)",
-      "benefit_annual_inr": 18000,
       "conditions_met": [
         "Widow eligibility",
         "Age lower limit",
@@ -34,10 +33,7 @@
       "status": "eligible_check_manually",
       "verified": false,
       "benefit": "One time lump sum financial assistance of Rs. 20,000/-",
-      "benefit_annual_inr": null,
       "conditions_met": [
-        "Under this Scheme in case of accidental or natural death of a primary bread winner in the BPL Family in the age group of 18 to 59 years, the affected family is provided with one time lump sum financia",
-        "Under this Scheme in case of accidental or natural death of a primary bread winner in the BPL Family in the age group of 18 to 59 years, the affected family is provided with one time lump sum financia",
         "Under this Scheme in case of accidental or natural death of a primary bread winner in the BPL Family in the age group of 18 to 59 years, the affected family is provided with one time lump sum financia"
       ],
       "check_yourself": [
@@ -59,7 +55,6 @@
       "status": "eligible_check_manually",
       "verified": false,
       "benefit": "Financial assistance of 1.20 lakh rupees for construction or upgrading of houses for vulnerable sections.",
-      "benefit_annual_inr": 120000,
       "conditions_met": [
         "Only for residents of Maharashtra",
         "Beneficiary must have resided in Maharashtra for at least 15 years.",
@@ -85,7 +80,6 @@
       "status": "eligible_check_manually",
       "verified": false,
       "benefit": "Financial assistance for construction of houses for the poor and homeless.",
-      "benefit_annual_inr": 130000,
       "conditions_met": [
         "The scheme is intended for citizens below the poverty line."
       ],
@@ -108,7 +102,6 @@
       "status": "eligible_check_manually",
       "verified": false,
       "benefit": "ASHA workers are community health volunteers who receive performance-based incentives for providing health services, counseling, and facilitating access to healthcare in rural areas.",
-      "benefit_annual_inr": null,
       "conditions_met": [
         "Minimum age requirement for ASHA selection.",
         "Maximum age requirement for ASHA selection.",
