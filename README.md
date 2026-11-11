@@ -295,6 +295,39 @@ python -m store verify <id>      # mark a scheme as checked by a person
 The scheme shape is unchanged — the same dictionary the old YAML held, stored as JSON in a column
 with the ranking and filtering fields indexed beside it.
 
+### PostgreSQL (for deployment)
+
+SQLite stays the default. Set `DATABASE_URL` in `.env` to use PostgreSQL instead (any host; tested
+on Neon). Every module keeps calling `from store import db`; `store/db.py` picks the backend.
+
+```bash
+python -m store pg-init                 # create the schema (store/sql/*.sql) and seed states/districts
+python -m store pg-import               # copy every scheme and crawl record from data/schemes.db
+python scripts/check_pg_parity.py       # prove Postgres gives the same answers as SQLite
+python -m store quality                 # quality scores, levels, "who is it for" targets, topics
+```
+
+Postgres keeps each scheme's dict as JSONB (what the engine reads) plus tables derived from it in
+the same transaction: one row per rule with its source sentence, the "who is it for" index
+(`scheme_target`: gender, occupation, social category, age band, income limit), names, documents,
+sources and a 0-100 quality score. The targets are derived in code from the rules, never by an LLM.
+
+The opt-in Postgres tests need a throwaway database whose name ends in `_test`:
+
+```bash
+TEST_DATABASE_URL=postgresql://user:password@host/yojana_test python -m pytest -q tests/test_pg_store.py
+```
+
+Live end-to-end check of one message (LLM read, database, engine, top 5, gap handling, cost):
+
+```bash
+python scripts/try_flow.py "I am a 60 year old farmer in Pune, Maharashtra"
+python scripts/try_flow.py --web 2 "<message>"      # live web search when fewer than 5 good matches
+python scripts/try_flow.py --update 3 "<message>"   # also read 3 queued official pages into the database
+python scripts/query_cost.py --since <UTC time>     # tokens per model for the calls since then
+python scripts/bench_extract.py local:<model>       # extraction accuracy of a model on real pages
+```
+
 ---
 
 ## Testing

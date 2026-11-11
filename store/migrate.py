@@ -4,6 +4,11 @@
     python -m store export [dir]       database -> readable YAML (backup, diffs, review)
     python -m store stats              what the database holds
     python -m store verify <id>        mark a scheme as checked by a person
+    python -m store pg-init            PostgreSQL: create the schema and seed the geography
+    python -m store pg-import [file]   PostgreSQL: copy schemes and crawl records from SQLite
+    python -m store quality            PostgreSQL: quality scores, levels, targets, topics
+
+The backend is SQLite unless DATABASE_URL is set (see store/db.py).
 
 Only scheme files move. schemes/fields.yaml, questions.yaml and flagship.yaml are vocabulary
 and configuration, not schemes, and stay as files.
@@ -77,9 +82,21 @@ def main(argv: list[str] | None = None) -> int:
     elif cmd == "verify" and len(argv) > 1:
         ok = db.set_verified(argv[1], True)
         print(f"{argv[1]}: {'marked verified' if ok else 'not found'}")
+    elif cmd in ("pg-init", "pg-import", "quality"):
+        if db.backend_name() != "postgres":
+            print("Set DATABASE_URL in .env first (postgresql://user:password@localhost:5432/yojana).")
+            return 2
+        from . import pg_admin
+        print(f"Database: {db.db_path()}")
+        if cmd == "pg-init":
+            pg_admin.init_schema()
+        elif cmd == "pg-import":
+            pg_admin.import_from_sqlite(argv[1] if len(argv) > 1 else None)
+        else:
+            pg_admin.quality_report()
     elif cmd == "stats":
         s = db.stats()
-        print(f"Database: {db.db_path()}")
+        print(f"Database ({db.backend_name()}): {db.db_path()}")
         print(f"{s['schemes']} schemes ({s['by_origin']}), {s['rules']} rules, "
               f"{s['verified']} checked by a person, {s['districts']} districts")
         print("By state:", ", ".join(f"{k} {v}" for k, v in s["by_state"].items()))

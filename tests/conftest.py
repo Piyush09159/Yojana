@@ -1,8 +1,14 @@
+import os
 import shutil
 import sys
 from pathlib import Path
 
 import pytest
+
+# Tests never touch a real database server. An empty DATABASE_URL keeps every test on its own
+# SQLite copy, and stops .env (loaded with override=False) from filling it in. The Postgres
+# backend has its own opt-in tests, enabled by TEST_DATABASE_URL (see test_pg_store.py).
+os.environ["DATABASE_URL"] = ""
 
 # make `import core` work when running pytest from the project root
 ROOT = Path(__file__).resolve().parent.parent

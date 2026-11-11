@@ -130,6 +130,20 @@ class FakeSearch(CachedSearch):
         return []
 
 
+class NoSearch:
+    """Stand-in when no SEARCH_PROVIDER is configured. Work that needs no search (reading queued
+    pages, crawling known sites) still runs; a search attempt raises a clear SearchError, which
+    callers already handle as "search unavailable"."""
+    name = "none"
+    live_calls = 0
+
+    def __init__(self, reason: str = "no SEARCH_PROVIDER configured"):
+        self.reason = reason
+
+    def search(self, query: str, num: int = 10):
+        raise SearchError(f"web search unavailable: {self.reason}")
+
+
 PROVIDERS = {"serpapi": SerpAPISearch, "tavily": TavilySearch}
 
 

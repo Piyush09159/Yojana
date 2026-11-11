@@ -23,7 +23,7 @@ from llm import LLMClient, LLMError, get_llm
 from store import db
 
 from .catalog import load_catalog, norm_name, save_discovered
-from .search import SearchError, SearchProvider, get_search
+from .search import NoSearch, SearchError, SearchProvider, get_search
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -54,7 +54,12 @@ class Discoverer:
                  fetcher: Fetcher | None = None, db_path: Path | None = None,
                  log: Callable[[str], None] = lambda m: None):
         self.llm = llm or get_llm("extractor")
-        self.search = search or get_search()
+        if search is None:
+            try:
+                search = get_search()
+            except SearchError as e:       # no key: page reading still works, searches say why not
+                search = NoSearch(str(e))
+        self.search = search
         self.fetcher = fetcher or Fetcher()
         self.db_path = db_path
         self.log = log
