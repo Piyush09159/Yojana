@@ -48,7 +48,7 @@ def test_literal_menu_labels_and_duplicate_call_link(persistent, monkeypatch):
     sender=Mock();monkeypatch.setattr(waha,'_send',sender)
     with TestClient(create_app()) as client:
         assert signed(client,'YOJANA','release-start').json()['status']=='started'
-        assert 'Reply *Chat* or *Call*' in sender.call_args.args[-1]
+        assert '1. English' in sender.call_args.args[-1]
         assert signed(client,'Chat','release-chat').json()['status']=='chat_selected'
         signed(client,'YOJANA','release-menu')
         assert signed(client,'Call','release-call').json()['status']=='voice_link'

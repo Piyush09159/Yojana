@@ -5,3 +5,11 @@
 body[data-state=speaking] .orb{background:#d8ede9;color:#086b61}
 body[data-state=thinking] .orb{background:#fff0d8;color:#8a5a1a}
 body[data-state=completed] .orb{background:#deefdf;color:#286437}
+/* Call states: idle, listening, transcribing, thinking, speaking, reconnecting, ended. */
+.level{width:140px;height:6px;margin:0 auto 6px;border-radius:3px;background:#e4efe8;overflow:hidden}.level span{display:block;height:100%;width:0;background:#08796b;transition:width .08s linear}
+.option{display:flex;gap:10px;align-items:flex-start;font-size:13px;margin:4px 0 8px}.option input{min-width:20px;min-height:20px}
+#voice-network{padding:10px 13px;border-left:3px solid #a86920;background:#fff5df;color:#5a451f;border-radius:7px;font-size:13px}
+body[data-state=transcribing] .orb{background:#e8eefc;color:#2f4f8a}
+body[data-state=reconnecting] .orb{background:#fff0d8;color:#8a5a1a}
+body[data-state=ended] .orb{background:#deefdf;color:#286437}
+#voice-replay.attention{border-color:#a86920;background:#fff9ed}

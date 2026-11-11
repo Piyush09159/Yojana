@@ -81,6 +81,33 @@ def _question_text(q: dict, lang: str) -> str:
     return localized or q["text"]
 
 
+def pending_question_text(state, lang):
+    """The question this case is waiting on, in `lang` (English when no translation exists)."""
+    q = state.get('pending')
+    return _question_text(q, lang) if q else None
+
+
+def _language_switched(state, sid, lang, finish):
+    """An explicit "speak Marathi" message: change the case language and preference only. Facts,
+    question progress and the case id stay; no model call, so nothing is extracted from the request."""
+    from core.language_detect import CONFIRM, NEXT
+    state['lang'] = state['preferred_lang'] = lang
+    q = state.get('pending')
+    message = CONFIRM[lang] + '\n\n' + (_question_text(q, lang) if q else NEXT[lang])
+    assessment = state.get('assessment') or {}
+    previous = state.get('last_response') or {}
+    return finish({'session_id': sid, 'message': message,
+                   'question': {k: q.get(k) for k in ('field', 'text', 'reason', 'choices', 'type')} if q else None,
+                   'corrections': {}, 'profile': state['profile'],
+                   'results': previous.get('results') or {'start_with': None, 'others': [], 'needs_information': [], 'schemes_checked': 0},
+                   'language': lang, 'turn_language': lang, 'preferred_language': lang, 'language_switched': lang,
+                   'assessment_complete': bool(assessment.get('assessment_complete')), 'assessment': assessment,
+                   'recommendations': assessment.get('recommendations', []),
+                   'spoken_text': message[:360], 'speech_language': lang, 'text_fallback': False,
+                   'searching_more': False,
+                   'disclaimer': 'Recommendations are informational; verify unreviewed schemes against official sources.'})
+
+
 def _spoken_conclusion(decision, language):
     # Fixed guidance only: never translate scheme names, amounts or eligibility
     # predicates with an LLM. Full evidence remains visible in the saved cards.
@@ -261,6 +288,10 @@ def _conversation(body, access_token, trusted, tx):
         return result
 
     text = _safe_message(body.text)
+    from core.language_detect import switch_request, detect
+    switched = switch_request(text)
+    if switched:
+        return _language_switched(state, sid, switched, finish)
     # A dependent is a separate beneficiary, never a blend of the parent's facts.
     dependent = body.new_beneficiary or (state.get('beneficiary_kind')!='dependent' and bool(re.search(r'\b(?:for my|my) (?:child|son|daughter|dependent)\b',text,re.I)))
     if dependent:
@@ -275,6 +306,7 @@ def _conversation(body, access_token, trusted, tx):
     started=time.perf_counter()
     # A short reply to the pending question is read by code: no model call, no inference metric.
     parsed = _short_answer(state.get("pending"), text, state.get("lang"))
+    from_code = parsed is not None
     if parsed is None:
         try:
             llm = get_llm("reader")
@@ -314,8 +346,20 @@ def _conversation(body, access_token, trusted, tx):
     state["profile"].update(cleaned)
     if state.get('assessment',{}).get('assessment_complete') and (state['profile']!=original_profile or getattr(parsed,'requested_category',None)):
         state.update(asked=[],pending=None,question_count=0,pending_repeats=0)
+    # preferred_lang: an explicit choice (switch request, voice-page selector, WhatsApp menu), kept
+    # until changed. turn language: what this message is in. Replies follow the preference; without
+    # one they follow this message, and an unsure guess keeps the case's previous language.
     detected = normalize(parsed.language)
-    state['lang'] = body.lang if body.language_override and body.lang != 'auto' else (detected if detected != 'auto' else 'en')
+    turn, sure = detect(text)
+    if body.language_override and body.lang != 'auto':
+        state['lang'] = body.lang
+    elif state.get('preferred_lang') in ('en', 'hi', 'mr'):
+        state['lang'] = state['preferred_lang']
+    elif detected != 'auto' and not from_code:
+        state['lang'] = detected
+    else:
+        state['lang'] = turn if sure else (state.get('lang') if state.get('lang') not in (None, 'auto') else 'en')
+    turn_language = detected if detected != 'auto' and not from_code else turn
     context_profile = {**state['profile'], '_intent': state['intent_context']}
     catalog = relevant_catalog(context_profile,load_catalog())
     shortlist = _shortlist_public(context_profile, catalog) if catalog else {'start_with':None,'others':[],'needs_information':[],'schemes_checked':0}
@@ -354,6 +398,7 @@ def _conversation(body, access_token, trusted, tx):
             "profile": state["profile"], "results": shortlist, 'language': state['lang'],
             'assessment_complete':decision['assessment_complete'],'assessment':decision,
             'recommendations':decision['recommendations'],'spoken_text':answer[:360] if q else _spoken_conclusion(decision,state['lang']),
+            'turn_language': turn_language, 'preferred_language': state.get('preferred_lang'),
             'speech_language':state['lang'] if state['lang'] in ('en','hi','mr') and (not q or
                 QUESTION_TEXT.get(q['field'],{}).get(state['lang']) or
                 (not q.get('synthetic') and q.get('text_'+state['lang']))) else 'en',

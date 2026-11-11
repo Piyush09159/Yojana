@@ -66,13 +66,30 @@ def redeem(body: Redemption, request: Request, response: Response):
         tx.execute('INSERT INTO case_grants VALUES(?,?,?) ON CONFLICT(session_id,owner_hash) DO UPDATE SET expires_at=excluded.expires_at',
                    (link['session_id'], case_store.digest(token), row['expires_at']))
         tx.execute('UPDATE voice_links SET redeemed_at=? WHERE token_hash=?', (time.time(), token_hash))
-        return {'session_id': link['session_id']}
+        # The page opens in the language the citizen chose in WhatsApp (facts stay server-side).
+        state = row['state']
+        lang = state.get('preferred_lang') or state.get('lang')
+        return {'session_id': link['session_id'], 'language': lang if lang in ('en', 'hi', 'mr') else None}
+
+
+def browser_stt_mode():
+    """How the voice page captures speech (BROWSER_STT_MODE):
+      server  record in the page, transcribe with the server STT provider (local STT keeps audio on
+              our own servers; the page's built-in recognition is never used)
+      device  the browser's own SpeechRecognition (Chrome sends audio to its vendor), server as fallback
+      auto    device recognition when the browser has it, else server (the historical behaviour)
+    Default: server when the server STT provider is local and configured, else auto."""
+    chosen = os.getenv('BROWSER_STT_MODE', '').strip().lower()
+    if chosen in ('server', 'device', 'auto'):
+        return chosen
+    return 'server' if speech.stt_provider() == 'local' and speech.stt_configured() else 'auto'
 
 
 @router.get('/capabilities')
 def capabilities():
-    return {'languages': registry(), 'tts_configured': bool(os.getenv('SARVAM_API_KEY')),
+    return {'languages': registry(), 'tts_configured': speech.tts_configured(), 'tts_provider': speech.tts_provider(),
             'stt_configured': speech.stt_configured(), 'stt_provider': speech.stt_provider(),
+            'browser_stt': browser_stt_mode(), 'max_record_seconds': 15,
             'speech_live_verified': False, 'kind': 'browser_voice_not_phone_call'}
 
 
@@ -155,7 +172,7 @@ def turn(cid: str, body: Turn, request: Request):
         transcript += [{'role':'user','text':redact(body.text)},
                        {'role':'assistant','text':redact(result['message']), 'request_id':body.request_id,'result':minimize(result)}]
         tx.execute('UPDATE voice_calls SET transcript=? WHERE id=?', (json.dumps(transcript,ensure_ascii=False),cid))
-        if result.get('assessment_complete'):
+        if result.get('assessment_complete') and not result.get('language_switched'):
             snapshot={'schemes':result['recommendations'],
                       'caveat':'Guidance only; check missing conditions and official sources. No government approval is implied.',
                       'government_submission':False,'assessment':result['assessment']}
@@ -237,8 +254,10 @@ def history(cid: str, request: Request):
     require_store()
     with case_store.transaction('voice:'+cid) as tx:
         row = call(tx,cid,owner(request))
+        state = tx.session(row['session_id'], owner(request))['state']
         queued = tx.execute('SELECT status,attempts FROM summary_outbox WHERE call_id=?',(cid,)).fetchone()
-        return {'call_id':cid,'status':row['status'],'transcript':[{'role':m['role'],'text':m['text']} for m in json.loads(row['transcript'])],
+        return {'call_id':cid,'status':row['status'],'language':state.get('lang','en'),
+                'preferred_language':state.get('preferred_lang'),'transcript':[{'role':m['role'],'text':m['text']} for m in json.loads(row['transcript'])],
                 'summary':safe_snapshot(json.loads(row['summary'])) if row['summary'] else None,
                 'whatsapp':dict(queued) if queued else {'status':'not_requested'},'recipient_delivery_verified':False}
 
@@ -292,7 +311,54 @@ def transcribe(body: Audio, request: Request):
         row = call(tx,body.call_id,owner(request))
         if row['status'] != 'active':
             raise HTTPException(409,'Voice session has ended')
-    return speech.stt(body.audio,body.lang)
+    result = speech.stt(body.audio,body.lang)
+    # The page shows the words and waits for Send instead of submitting a number it may have misheard.
+    return {**result, 'needs_confirmation': speech.needs_confirmation(result['text'], result['language'], result.get('confidence'))}
+
+
+class LanguageChange(BaseModel):
+    lang: str = Field(max_length=8)
+    request_id: str = Field(min_length=8, max_length=80)
+
+    @field_validator('lang')
+    @classmethod
+    def language(cls, value):
+        if value not in ('auto', 'en', 'hi', 'mr', 'en-IN', 'hi-IN', 'mr-IN'):
+            raise ValueError('Choose English, Hindi, Marathi or automatic')
+        return value.split('-')[0]
+
+
+@router.post('/{cid}/language')
+def change_language(cid: str, body: LanguageChange, request: Request):
+    """Change language during a live session. Facts, question progress and the case are kept; the
+    pending question is returned in the new language so the page can show and speak it."""
+    require_store()
+    from core.language_detect import CONFIRM, NEXT
+    from .conversation_api import pending_question_text
+    token = owner(request)
+    with case_store.transaction('voice:'+cid) as tx:
+        row = call(tx, cid, token)
+        if row['status'] != 'active':
+            raise HTTPException(409, 'Voice session has ended')
+        tx.lock(row['session_id'])
+        case = tx.session(row['session_id'], token)
+        state = case['state']
+        transcript = json.loads(row['transcript'])
+        if transcript and transcript[-1].get('request_id') == body.request_id:
+            return transcript[-1]['result']
+        if body.lang == 'auto':
+            state.pop('preferred_lang', None)
+            return {'language': state.get('lang', 'en'), 'preferred_language': None, 'message': None}
+        state['lang'] = state['preferred_lang'] = body.lang
+        tx.save(row['session_id'], state, token)
+        question = pending_question_text(state, body.lang)
+        message = CONFIRM[body.lang] + '\n\n' + (question or NEXT[body.lang])
+        result = {'language': body.lang, 'preferred_language': body.lang, 'message': message,
+                  'spoken_text': message[:360], 'speech_language': body.lang, 'request_id': body.request_id,
+                  'language_switched': body.lang}
+        transcript.append({'role': 'assistant', 'text': redact(message), 'request_id': body.request_id, 'result': result})
+        tx.execute('UPDATE voice_calls SET transcript=? WHERE id=?', (json.dumps(transcript, ensure_ascii=False), cid))
+        return result
 
 
 @router.post('/tts')

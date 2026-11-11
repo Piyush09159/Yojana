@@ -26,12 +26,14 @@ if not log.handlers:
 SAFE_KEYS = {'event', 'stage', 'status', 'detail', 'mimetype', 'bytes', 'seconds', 'ms', 'language',
              'source', 'result', 'enabled', 'configured', 'missing', 'engine_has_body',
              # WAHA_MEDIA_UNTRUSTED: which check failed + categorical facts (never the URL/host/file)
-             'check', 'scheme', 'origin_kind', 'host_match', 'port_match'}
+             'check', 'scheme', 'origin_kind', 'host_match', 'port_match',
+             # menus and voice read-back: categorical only (never the transcript)
+             'menu', 'confidence'}
 ERRORS = {'WAHA_MEDIA_UNAVAILABLE', 'WAHA_MEDIA_UNSUPPORTED', 'WAHA_MEDIA_UNTRUSTED',
           'WAHA_MEDIA_DOWNLOAD_FAILED', 'WAHA_AUDIO_DECODE_FAILED', 'VOICE_TOO_LONG',
           'SARVAM_STT_DISABLED', 'SARVAM_STT_FAILED', 'VOICE_BUSY', 'VOICE_CONVERSATION_FAILED',
           'WAHA_REPLY_DELIVERY_FAILED', 'VOICE_CONFIG_INCOMPLETE', 'VOICE_SENSITIVE_NUMBER', 'VOICE_PROCESSING_FAILED',
-          'STT_DISABLED', 'LOCAL_STT_DISABLED', 'LOCAL_STT_FAILED', 'VOICE_NO_SPEECH'}
+          'STT_DISABLED', 'LOCAL_STT_DISABLED', 'LOCAL_STT_FAILED', 'VOICE_NO_SPEECH', 'WAHA_LIST_FALLBACK'}
 
 
 def _safe(value):

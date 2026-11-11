@@ -51,8 +51,8 @@ def test_activation_sends_menu_to_exact_personal_id(channel,chat):
     assert request['headers']=={'X-Api-Key':'fixture-api-key'}
     assert request['json']['chatId']==chat
     assert request['json']['session']=='default'
-    assert 'Welcome to Yojana Saathi!' in request['json']['text']
-    assert 'Reply *Chat* or *Call*' in request['json']['text']
+    assert 'Welcome to Yojana Saathi' in request['json']['text']
+    assert '1. English' in request['json']['text']        # language menu first (numbered text by default)
     assert incoming(client,chat=chat).json()['status']=='duplicate'
     assert post.call_count==1
 

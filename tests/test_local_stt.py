@@ -62,7 +62,7 @@ def wav_b64(name):
 
 def test_local_request_shape_and_language_hint(local_stt):
     out = speech.stt(wav_b64('mr_5.wav'), 'mr')
-    assert out == {'text': 'मी 62 वर्षांचा शेतकरी आहे', 'language': 'mr'}
+    assert out == {'text': 'मी 62 वर्षांचा शेतकरी आहे', 'language': 'mr', 'confidence': None}
     sent = local_stt['calls']['stt'][0]
     assert str(sent.url) == 'http://yojana-stt:8001/transcribe?language=mr'
     assert sent.headers['content-type'] == 'audio/wav' and sent.headers['authorization'] == 'Bearer ' + 'k' * 32
@@ -174,6 +174,7 @@ def test_voice_note_transcribed_locally_and_answered(channel, local_stt, monkeyp
 def test_chat_language_is_sent_as_hint(channel, local_stt, monkeypatch):
     client, sender = channel
     mock_extraction(monkeypatch)
+    monkeypatch.setenv('VOICE_CONFIRM_LANGUAGES', '')     # read-back is covered in test_multilingual.py
     signed(client, 'Marathi', 'lang-mr-local')
     assert post(client, voice('HINT1')).json()['status'] == 'replied'
     assert local_stt['calls']['stt'][0].url.params['language'] == 'mr'

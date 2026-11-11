@@ -25,6 +25,8 @@ from . import case_store, notifications, speech
 from .privacy import redact
 from .channel_security import seal, unseal
 from .diagnostics import emit
+from . import whatsapp_menu as menu
+from core.language_detect import detect, switch_request, CONFIRM, SWITCH_HINT
 
 router = APIRouter(tags=["WhatsApp (opt-in beta)"])
 
@@ -39,19 +41,6 @@ def command_text(text):
 
 ACTIVATE = {'yojana', 'yojna', 'योजना'}
 STOP = {'stop', 'unsubscribe', 'बंद', 'थांबा'}
-CHAT = {'chat', 'चैट', 'चॅट', 'गप्पा'}
-CALL = {'call', 'कॉल', 'बोलणे'}
-LANGUAGE = {'english':'en', 'hindi':'hi', 'हिंदी':'hi', 'हिन्दी':'hi', 'marathi':'mr', 'मराठी':'mr'}
-
-def welcome(lang):
-    lead = {'en':'Welcome to Yojana Saathi!\n\nHow would you like to continue?',
-            'hi':'योजना साथी में आपका स्वागत है!\n\nआप कैसे आगे बढ़ना चाहते हैं?',
-            'mr':'योजना साथीमध्ये आपले स्वागत आहे!\n\nपुढे कसे जायचे?'}[lang]
-    options = {'en':'• *Chat* — Send text or WhatsApp voice notes (up to 15 seconds).\n• *Call* — Open a secure browser voice conversation.\n\nReply *Chat* or *Call*.',
-               'hi':'• *चैट* — संदेश या WhatsApp वॉइस नोट भेजें (15 सेकंड तक)।\n• *कॉल* — सुरक्षित ब्राउज़र में बात करें।\n\n*Chat* / *चैट* या *Call* / *कॉल* लिखें।',
-               'mr':'• *चॅट* — संदेश किंवा WhatsApp व्हॉइस नोट पाठवा (15 सेकंदांपर्यंत).\n• *कॉल* — सुरक्षित ब्राउझरमध्ये बोला.\n\n*Chat* / *चॅट* किंवा *Call* / *कॉल* लिहा.'}[lang]
-    return lead+'\n\n'+options+notifications.option_notice(lang)+'\nSTOP: unsubscribe. Never send Aadhaar, bank or identity numbers. Independent guidance; not a government service.'
-
 VOICE_FAILURE = {
     'generic': {'en':"I couldn't transcribe that voice note. Please retry with up to 15 seconds or type instead. Do not share identity or bank numbers.",
                 'hi':'वॉइस नोट समझ नहीं आया। कृपया 15 सेकंड तक का नोट फिर भेजें या लिखें। पहचान या बैंक नंबर न भेजें।',
@@ -84,9 +73,9 @@ _transcripts: 'OrderedDict[str, tuple[float, str, str]]' = OrderedDict()
 _transcripts_lock = threading.Lock()
 
 
-def _remember_transcript(event_id, text, language):
+def _remember_transcript(event_id, text, language, confidence=None):
     with _transcripts_lock:
-        _transcripts[event_id] = (time.monotonic() + 900, text, language)
+        _transcripts[event_id] = (time.monotonic() + 900, text, language, confidence)
         while len(_transcripts) > 64:
             _transcripts.popitem(last=False)
 
@@ -150,6 +139,28 @@ def _send(url: str, key: str, session: str, chat_id: str, message: str):
                       timeout=12)
     resp.raise_for_status()
 
+
+
+def _send_list(url: str, key: str, session: str, chat_id: str, message: dict):
+    """WAHA POST /api/sendList (NOWEB, 1:1 chats only). WAHA documents lists as fragile."""
+    resp = httpx.post(url + "/api/sendList", headers={"X-Api-Key": key},
+                      json={"session": session, "chatId": chat_id, "message": message}, timeout=12)
+    resp.raise_for_status()
+
+
+def _deliver(url, key, session, chat_id, stored, event_id):
+    """Send one stored reply. A menu goes as an interactive list when WAHA_INTERACTIVE_LISTS=true and
+    WAHA accepts it; otherwise (or on any list failure) as the numbered text menu."""
+    menu_name, lang, text = _split_list(stored)
+    if menu_name and menu.interactive_enabled():
+        try:
+            _send_list(url, key, session, chat_id, menu.list_message(menu_name, lang if lang in ('en', 'hi', 'mr') else 'en'))
+            emit('WAHA_LIST_SENT', event=event_id, menu=menu_name)
+            return
+        except (httpx.HTTPError, OSError) as exc:
+            emit('WAHA_LIST_FALLBACK', event=event_id, menu=menu_name,
+                 status=getattr(getattr(exc, 'response', None), 'status_code', None), detail=type(exc).__name__)
+    _send(url, key, session, chat_id, text)
 
 
 @router.post("/api/integrations/waha/{webhook_secret}", include_in_schema=False)
@@ -253,6 +264,229 @@ def _ignore_reason(body, p, chat, text, mid, expected_session):
     return None
 
 
+SEALED_RESULTS = {'voice_link', 'voice_confirm'}     # replies holding a capability link or a transcript
+LIST_MARK = '⁣'                                 # invisible separator around a list-menu marker
+
+
+def _with_list(menu_name, lang, text):
+    """Stored reply for a menu: a marker naming the list to try first, then the numbered text menu
+    that is sent as-is when lists are off or WAHA refuses the list."""
+    return f'{LIST_MARK}list:{menu_name}:{lang}{LIST_MARK}{text}'
+
+
+def _split_list(reply):
+    if reply and reply.startswith(LIST_MARK):
+        marker, _, text = reply[1:].partition(LIST_MARK)
+        _, menu_name, lang = (marker.split(':') + ['', '', ''])[:3]
+        return menu_name, lang, text
+    return None, None, reply
+
+
+def _menu_state(tx, chat_hash, **fields):
+    """Upsert one chat's menu/language row (channel_menus); the chat must exist in waha_chats."""
+    columns = ['chat_hash'] + list(fields)
+    tx.execute(f'INSERT INTO channel_menus({",".join(columns)}) VALUES({",".join("?" * len(columns))}) '
+               f'ON CONFLICT(chat_hash) DO UPDATE SET {",".join(f"{c}=excluded.{c}" for c in fields)}',
+               (chat_hash, *fields.values()))
+
+
+def _live_session(tx, sid):
+    if not sid:
+        return None
+    try:
+        return tx.session(sid, trusted=True)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        return None
+
+
+def _set_session_language(tx, mapping, lang):
+    """Explicit preference: the case keeps its facts, question and progress; only the language moves.
+    Returns the pending question in the new language, if the case has one."""
+    row = _live_session(tx, mapping['session_id'])
+    if not row:
+        return None
+    tx.lock(mapping['session_id'])
+    row['state']['lang'] = row['state']['preferred_lang'] = lang
+    tx.save(mapping['session_id'], row['state'], kind=row['kind'])
+    from .conversation_api import pending_question_text
+    return pending_question_text(row['state'], lang)
+
+
+def _pending_question(tx, mapping, lang):
+    row = _live_session(tx, mapping['session_id']) if mapping else None
+    if not row:
+        return None
+    from .conversation_api import pending_question_text
+    return pending_question_text(row['state'], lang)
+
+
+def _handle(tx, p, chat, chat_hash, text, event_id, mapping, media_error, media_detail, media_language,
+            media_confidence):
+    """Decide one opted-in (or opting-in) message. Returns (status, reply, language)."""
+    voice = bool(p.get('hasMedia'))
+    menu_row = tx.execute('SELECT * FROM channel_menus WHERE chat_hash=?', (chat_hash,)).fetchone()
+    language_row = tx.execute('SELECT language FROM channel_languages WHERE chat_hash=?', (chat_hash,)).fetchone()
+    last = language_row['language'] if language_row else ('hi' if command_text(text) == 'योजना' else 'en')
+    if last not in ('en', 'hi', 'mr'):
+        last = 'en'  # Registered languages need an explicit, safe demo fallback.
+    preferred = menu_row['preferred_language'] if menu_row and menu_row['preferred_language'] in ('en', 'hi', 'mr') else None
+    lang = preferred or last
+    command = command_text(text) if not voice else ''
+    row_id = menu.selected_row_id(p) if not voice else None
+    open_menu = menu.menu_open(menu_row)
+    option = menu.choice(text, open_menu, row_id) if not voice else None
+    switch = None if option else switch_request(text)
+    opted_in = bool(mapping and mapping['opted_in'])
+
+    if command in STOP:
+        # No unsolicited STOP acknowledgement to a chat that never opted in.
+        if not opted_in:
+            return 'not_opted_in', None, lang
+        if mapping['session_id']:
+            tx.lock(mapping['session_id'])
+            tx.execute('DELETE FROM case_sessions WHERE id=?', (mapping['session_id'],))
+        notifications.remove(tx, chat_hash)
+        tx.execute('DELETE FROM waha_chats WHERE chat_hash=?', (chat_hash,))
+        tx.execute("UPDATE waha_events SET status='sent',reply=NULL,result='cancelled' WHERE chat_hash=?", (chat_hash,))
+        return 'stopped', STOPPED, lang
+    if command in ACTIVATE:
+        if not opted_in:
+            tx.execute('''INSERT INTO waha_chats VALUES(?,?,?,?) ON CONFLICT(chat_hash)
+                DO UPDATE SET opted_in=1,updated_at=excluded.updated_at''', (chat_hash, None, 1, time.time()))
+        tx.execute("INSERT INTO channel_preferences VALUES(?,'awaiting') ON CONFLICT(chat_hash) DO UPDATE SET mode='awaiting'",(chat_hash,))
+        # The citizen's case (facts, question progress) is untouched: YOJANA only reopens the menu.
+        _menu_state(tx, chat_hash, menu='language', menu_at=time.time())
+        return 'started', _with_list('language', lang, menu.language_menu_text()), lang
+    if not opted_in:
+        return 'not_opted_in', None, lang
+    if media_error:
+        _menu_state(tx, chat_hash, menu=None, menu_at=None)
+        return 'transcription_failed', voice_failure(lang, media_error, media_detail), lang
+
+    # A read-back voice note waits for YES; anything else discards it and is handled normally.
+    confirmed = None
+    if menu_row and menu_row['pending_voice'] and not voice:
+        fresh = time.time() - (menu_row['pending_voice_at'] or 0) <= 900
+        _menu_state(tx, chat_hash, pending_voice=None, pending_voice_at=None)
+        if fresh and command in menu.YES:
+            confirmed = json.loads(unseal(menu_row['pending_voice']))
+        elif fresh and command in menu.NO:
+            return 'voice_rejected', menu.VOICE_REJECTED[lang], lang
+
+    if confirmed is None:
+        if command in notifications.UPDATES_ON | notifications.UPDATES_OFF | notifications.UPDATES_STATUS or option == 'menu:updates':
+            _menu_state(tx, chat_hash, menu=None, menu_at=None)
+            status, reply = notifications.handle_command(tx, chat_hash, chat, lang, command if option != 'menu:updates' else 'updates')
+            if status == 'alerts_on' and mapping['session_id']:
+                existing = _live_session(tx, mapping['session_id'])
+                if existing:
+                    notifications.update_profile(tx, chat_hash, chat, existing['state'].get('profile', {}), lang)
+            return status, reply, lang
+        if command in menu.MENU:
+            _menu_state(tx, chat_hash, menu='main', menu_at=time.time())
+            return 'main_menu', _with_list('main', lang, menu.main_menu_text(lang)), lang
+        if command in menu.HELP:
+            return 'help', menu.HELP_TEXT[lang], lang
+        if option == 'invalid':
+            if open_menu == 'language':
+                return 'invalid_choice', _with_list('language', lang, menu.INVALID[lang] + '\n\n' + menu.language_menu_text(False)), lang
+            return 'invalid_choice', _with_list('main', lang, menu.INVALID[lang] + '\n\n' + menu.main_menu_text(lang)), lang
+        chosen = option[5:] if option and option.startswith('lang:') else switch
+        if chosen:
+            lang = chosen
+            _menu_state(tx, chat_hash, preferred_language=lang, hinted_language=None)
+            question = _set_session_language(tx, mapping, lang)
+            if question:
+                # Mid-assessment: confirm and re-ask the same question; nothing restarts.
+                _menu_state(tx, chat_hash, menu=None, menu_at=None)
+                return 'language_selected', CONFIRM[lang] + '\n\n' + question, lang
+            _menu_state(tx, chat_hash, menu='main', menu_at=time.time())
+            lead = CONFIRM[lang] if _live_session(tx, mapping['session_id']) else menu.LANGUAGE_SET[lang]
+            return 'language_selected', _with_list('main', lang, lead + '\n\n' + menu.main_menu_text(lang)), lang
+        if option == 'menu:language':
+            _menu_state(tx, chat_hash, menu='language', menu_at=time.time())
+            return 'language_menu', _with_list('language', lang, menu.language_menu_text(False)), lang
+        if option == 'menu:chat':
+            tx.execute("INSERT INTO channel_preferences VALUES(?,'chat') ON CONFLICT(chat_hash) DO UPDATE SET mode='chat'",(chat_hash,))
+            _menu_state(tx, chat_hash, menu=None, menu_at=None)
+            reply = menu.CHAT_SELECTED[lang]
+            question = _pending_question(tx, mapping, lang)
+            if question:
+                reply += '\n\n' + menu.CONTINUE_CASE[lang] + '\n' + question
+            return 'chat_selected', reply, lang
+        if option == 'menu:call':
+            _menu_state(tx, chat_hash, menu=None, menu_at=None)
+            return 'voice_link', _voice_link(tx, chat, chat_hash, mapping, lang), lang
+
+    # ---------- an ordinary message: text, a voice transcript, or a confirmed read-back ----------
+    _menu_state(tx, chat_hash, menu=None, menu_at=None)
+    tx.execute("INSERT INTO channel_preferences VALUES(?,'chat') ON CONFLICT(chat_hash) DO UPDATE SET mode='chat'",(chat_hash,))
+    spoken = voice or confirmed is not None
+    if confirmed is not None:
+        text, media_language = confirmed['text'], confirmed['language']
+    if spoken and media_language in ('en', 'hi', 'mr'):
+        turn, sure = media_language, True
+    else:
+        turn, sure = detect(text)
+    reply_lang = preferred or (turn if sure else last)
+    if voice and speech.needs_confirmation(text, media_language, media_confidence):
+        _menu_state(tx, chat_hash, pending_voice=seal(json.dumps({'text': text, 'language': media_language})),
+                    pending_voice_at=time.time())
+        emit('VOICE_CONFIRMATION_REQUESTED', event=event_id, language=media_language,
+             confidence=None if media_confidence is None else round(media_confidence, 2))
+        return 'voice_confirm', menu.VOICE_CONFIRM[reply_lang].format(text=text[:400]), reply_lang
+    sid = mapping['session_id'] if _live_session(tx, mapping['session_id']) else None
+    other_script = any(c.isalpha() and ord(c) > 127 and not 'ऀ' <= c <= 'ॿ' for c in text)
+    try:
+        result = conversation(Message(text=text, session_id=sid, request_id=event_id, lang=reply_lang,
+                                      language_override=not other_script), trusted=True, tx=tx)
+    except HTTPException as exc:
+        if voice:
+            emit('VOICE_CONVERSATION_FAILED', event=event_id, status=exc.status_code,
+                 detail='retry_later' if exc.status_code in (429, 503) else 'rejected')
+        if exc.status_code in (429, 503):
+            # Roll back: WAHA's retry may safely process this event later
+            # (the transcript is kept in memory, so the note is not transcribed twice).
+            raise
+        return 'rejected', 'Please retry without sharing identity, bank or phone numbers.', reply_lang
+    tx.execute('UPDATE waha_chats SET session_id=?,updated_at=? WHERE chat_hash=?',
+               (result['session_id'], time.time(), chat_hash))
+    reply = redact(result['message'])
+    lang = result.get('language', reply_lang)
+    notifications.update_profile(tx, chat_hash, chat, result.get('profile', {}), lang)
+    if lang not in ('en', 'hi', 'mr'):
+        reply = 'This language is registered but not verified for this demo. Please use English, Hindi or Marathi.\n' + reply
+    elif preferred and sure and turn != preferred and (not menu_row or menu_row['hinted_language'] != turn):
+        # Replies stay in the chosen language; say once how to switch.
+        reply += '\n\n' + SWITCH_HINT[turn]
+        _menu_state(tx, chat_hash, hinted_language=turn)
+    return 'replied', reply, lang
+
+
+STOPPED = 'Yojana-Pilot stopped. The local case was cleared. Send YOJANA to opt in again. WAHA/provider logs have separate retention policies.'
+
+
+def _voice_link(tx, chat, chat_hash, mapping, lang):
+    tx.execute("INSERT INTO channel_preferences VALUES(?,'voice') ON CONFLICT(chat_hash) DO UPDATE SET mode='voice'",(chat_hash,))
+    from .voice import new_channel_case, handoff
+    sid = mapping['session_id']
+    if sid:
+        tx.lock(sid)
+        if not _live_session(tx, sid):
+            sid = None
+    sid = sid or new_channel_case(tx)
+    row = tx.session(sid, trusted=True)
+    row['state']['lang'] = lang
+    tx.save(sid, row['state'], kind=row['kind'])
+    tx.execute('UPDATE waha_chats SET session_id=?,updated_at=? WHERE chat_hash=?',(sid,time.time(),chat_hash))
+    tx.execute('INSERT INTO channel_routes VALUES(?,?) ON CONFLICT(chat_hash) DO UPDATE SET address_cipher=excluded.address_cipher',
+               (chat_hash,seal(chat)))
+    link = handoff(tx,sid,chat_hash)
+    return {'en':'Open your private one-use browser voice link within 10 minutes. Do not forward it:', 'hi':'10 मिनट के अंदर अपना निजी एक बार उपयोग होने वाला ब्राउज़र लिंक खोलें। इसे साझा न करें:', 'mr':'10 मिनिटांत तुमची खाजगी एकदाच वापरता येणारी ब्राउझर लिंक उघडा. ती शेअर करू नका:'}[lang]+'\n'+link
+
+
 def persistent_event(body):
     expected_session = os.getenv('WAHA_SESSION', 'default')
     p = body.payload
@@ -281,6 +515,7 @@ def persistent_event(body):
     media_version = None
     media_language = None
     media_hint = None
+    media_confidence = None
     if p.get('hasMedia'):
         with case_store.transaction(lock) as pre:
             prior = pre.execute('SELECT * FROM waha_events WHERE id=?', (event_id,)).fetchone()
@@ -300,13 +535,14 @@ def persistent_event(body):
             cached = _recall_transcript(event_id)
             try:
                 if cached:
-                    text, media_language = cached
+                    text, media_language, media_confidence = cached
                 else:
                     from .waha_media import transcribe
                     transcript = transcribe(p.get('media'), media_hint)
                     text, media_language = transcript['text'], transcript['language']
+                    media_confidence = transcript.get('confidence')
                     source = transcript.get('provider', 'sarvam')
-                    _remember_transcript(event_id, text, media_language)
+                    _remember_transcript(event_id, text, media_language, media_confidence)
                 emit('VOICE_TRANSCRIPT_READY', event=event_id, language=media_language,
                      source='cache' if cached else source, ms=int((time.monotonic() - started) * 1000))
             except Exception as exc:
@@ -327,109 +563,8 @@ def persistent_event(body):
             mapping = tx.execute('SELECT * FROM waha_chats WHERE chat_hash=?', (chat_hash,)).fetchone()
             if p.get('hasMedia') and (not mapping or not mapping['opted_in'] or mapping['updated_at'] != media_version):
                 return {'status':'cancelled'}
-            language_row = tx.execute('SELECT language FROM channel_languages WHERE chat_hash=?',(chat_hash,)).fetchone()
-            lang = language_row['language'] if language_row else ('hi' if command_text(text)=='योजना' else 'en')
-            if lang not in ('en','hi','mr'):
-                lang = 'en'  # Registered languages need an explicit, safe demo fallback.
-            command = command_text(text) if not p.get('hasMedia') else ''
-            reply = None
-            if command in STOP:
-                # No unsolicited STOP acknowledgement to a chat that never opted in.
-                status = 'stopped' if mapping and mapping['opted_in'] else 'not_opted_in'
-                if mapping and mapping['opted_in']:
-                    if mapping['session_id']:
-                        tx.lock(mapping['session_id'])
-                        tx.execute('DELETE FROM case_sessions WHERE id=?', (mapping['session_id'],))
-                    notifications.remove(tx, chat_hash)
-                    tx.execute('DELETE FROM waha_chats WHERE chat_hash=?', (chat_hash,))
-                    tx.execute("UPDATE waha_events SET status='sent',reply=NULL,result='cancelled' WHERE chat_hash=?", (chat_hash,))
-                    reply = 'Yojana-Pilot stopped. The local case was cleared. Send YOJANA to opt in again. WAHA/provider logs have separate retention policies.'
-            elif command in ACTIVATE:
-                if not mapping or not mapping['opted_in']:
-                    tx.execute('''INSERT INTO waha_chats VALUES(?,?,?,?) ON CONFLICT(chat_hash)
-                        DO UPDATE SET opted_in=1,updated_at=excluded.updated_at''', (chat_hash, None, 1, time.time()))
-                status = 'started'
-                tx.execute("INSERT INTO channel_preferences VALUES(?,'awaiting') ON CONFLICT(chat_hash) DO UPDATE SET mode='awaiting'",(chat_hash,))
-                reply = welcome(lang)
-            elif not mapping or not mapping['opted_in']:
-                status = 'not_opted_in'
-            elif media_error:
-                status, reply = 'transcription_failed', voice_failure(lang, media_error, media_detail)
-            elif command in notifications.UPDATES_ON | notifications.UPDATES_OFF | notifications.UPDATES_STATUS:
-                status, reply = notifications.handle_command(tx, chat_hash, chat, lang, command)
-                if status == 'alerts_on' and mapping and mapping['session_id']:
-                    try:
-                        existing = tx.session(mapping['session_id'], trusted=True)
-                        notifications.update_profile(tx, chat_hash, chat, existing['state'].get('profile', {}), lang)
-                    except HTTPException as exc:
-                        if exc.status_code != 404:
-                            raise
-            elif command in LANGUAGE:
-                lang = LANGUAGE[command]
-                tx.execute('INSERT INTO channel_languages VALUES(?,?) ON CONFLICT(chat_hash) DO UPDATE SET language=excluded.language',(chat_hash,lang))
-                if mapping['session_id']:
-                    row = tx.session(mapping['session_id'], trusted=True)
-                    row['state']['lang'] = lang
-                    tx.save(mapping['session_id'], row['state'], kind=row['kind'])
-                status, reply = 'language_selected', welcome(lang)
-            elif command in CHAT:
-                tx.execute("INSERT INTO channel_preferences VALUES(?,'chat') ON CONFLICT(chat_hash) DO UPDATE SET mode='chat'",(chat_hash,))
-                status, reply = 'chat_selected', {'en':'Chat selected. Describe your situation or send a voice note. Reply Call for browser voice; STOP to leave.', 'hi':'चैट चुना। अपनी स्थिति लिखें या वॉइस नोट भेजें। ब्राउज़र के लिए Call; बंद करने के लिए STOP।', 'mr':'चॅट निवडले. तुमची परिस्थिती लिहा किंवा व्हॉइस नोट पाठवा. ब्राउझरसाठी Call; बंद करण्यासाठी STOP.'}[lang]
-            elif command in CALL:
-                tx.execute("INSERT INTO channel_preferences VALUES(?,'voice') ON CONFLICT(chat_hash) DO UPDATE SET mode='voice'",(chat_hash,))
-                from .voice import new_channel_case, handoff
-                sid = mapping['session_id']
-                if sid:
-                    tx.lock(sid)
-                    try:
-                        tx.session(sid,trusted=True)
-                    except HTTPException as exc:
-                        if exc.status_code != 404:
-                            raise
-                        sid = None
-                sid = sid or new_channel_case(tx)
-                row = tx.session(sid, trusted=True)
-                row['state']['lang'] = lang
-                tx.save(sid, row['state'], kind=row['kind'])
-                tx.execute('UPDATE waha_chats SET session_id=?,updated_at=? WHERE chat_hash=?',(sid,time.time(),chat_hash))
-                tx.execute('INSERT INTO channel_routes VALUES(?,?) ON CONFLICT(chat_hash) DO UPDATE SET address_cipher=excluded.address_cipher',
-                           (chat_hash,seal(chat)))
-                link = handoff(tx,sid,chat_hash)
-                status,reply = 'voice_link', {'en':'Open your private one-use browser voice link within 10 minutes. Do not forward it:', 'hi':'10 मिनट के अंदर अपना निजी एक बार उपयोग होने वाला ब्राउज़र लिंक खोलें। इसे साझा न करें:', 'mr':'10 मिनिटांत तुमची खाजगी एकदाच वापरता येणारी ब्राउझर लिंक उघडा. ती शेअर करू नका:'}[lang]+'\n'+link
-            else:
-                tx.execute("INSERT INTO channel_preferences VALUES(?,'chat') ON CONFLICT(chat_hash) DO UPDATE SET mode='chat'",(chat_hash,))
-                sid = mapping['session_id']
-                if sid:
-                    try:
-                        tx.session(sid, trusted=True)
-                    except HTTPException as exc:
-                        if exc.status_code != 404:
-                            raise
-                        sid = None
-                if any('\u0900' <= c <= '\u097f' for c in text):
-                    lang = 'mr' if any(w in text for w in ('मी ', 'आहे', 'माझ', 'मला', 'वर्षांचा')) else ('hi' if lang != 'mr' else lang)
-                elif lang == 'en' and re.search(r'\b(I am|my|need|help|years old)\b',text,re.I):
-                    lang = 'en'
-                try:
-                    other_script = any(c.isalpha() and ord(c)>127 and not '\u0900'<=c<='\u097f' for c in text)
-                    result = conversation(Message(text=text, session_id=sid, request_id=event_id, lang=media_language if media_language in ('en','hi','mr') else lang, language_override=not other_script), trusted=True, tx=tx)
-                except HTTPException as exc:
-                    if p.get('hasMedia'):
-                        emit('VOICE_CONVERSATION_FAILED', event=event_id, status=exc.status_code,
-                             detail='retry_later' if exc.status_code in (429, 503) else 'rejected')
-                    if exc.status_code in (429, 503):
-                        # Roll back: WAHA's retry may safely process this event later
-                        # (the transcript is kept in memory, so Sarvam is not paid twice).
-                        raise
-                    status, reply = 'rejected', 'Please retry without sharing identity, bank or phone numbers.'
-                else:
-                    tx.execute('UPDATE waha_chats SET session_id=?,updated_at=? WHERE chat_hash=?',
-                               (result['session_id'], time.time(), chat_hash))
-                    status, reply = 'replied', redact(result['message'])
-                    lang = result.get('language', lang)
-                    notifications.update_profile(tx, chat_hash, chat, result.get('profile', {}), lang)
-                    if lang not in ('en','hi','mr'):
-                        reply = 'This language is registered but not verified for this demo. Please use English, Hindi or Marathi.\n'+reply
+            status, reply, lang = _handle(tx, p, chat, chat_hash, text, event_id, mapping,
+                                          media_error, media_detail, media_language, media_confidence)
             if mapping or status == 'started':
                 if status != 'stopped':
                     tx.execute('INSERT INTO channel_languages VALUES(?,?) ON CONFLICT(chat_hash) DO UPDATE SET language=excluded.language',(chat_hash,lang))
@@ -437,7 +572,7 @@ def persistent_event(body):
             now = time.time()
             tx.execute('INSERT INTO waha_events VALUES(?,?,?,?,?,?,?)',
                        (event_id, chat_hash, 'pending' if reply else 'sent', status,
-                        seal(reply) if reply and '#handoff=' in reply else reply, now, now))
+                        seal(reply) if reply and status in SEALED_RESULTS else reply, now, now))
     _forget_transcript(event_id)
     # The response outbox is committed before delivery. A retry reuses it without
     # repeating extraction, fact mutation or opt-in transitions.
@@ -447,7 +582,7 @@ def persistent_event(body):
             return {'status': 'duplicate' if event['reply'] else event['result']}
         url, key, _ = _config()
         try:
-            _send(url, key, expected_session, chat, unseal(event['reply']) if event['result']=='voice_link' else event['reply'])
+            _deliver(url, key, expected_session, chat, unseal(event['reply']), event_id)
         except (httpx.HTTPError, OSError) as exc:
             emit('WAHA_REPLY_DELIVERY_FAILED', event=event_id, result=event['result'],
                  status=getattr(getattr(exc, 'response', None), 'status_code', None), detail=type(exc).__name__)

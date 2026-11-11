@@ -318,6 +318,7 @@ def test_spoken_identity_number_is_refused_with_explanation(channel, monkeypatch
 def test_transcript_language_reaches_the_conversation(channel, monkeypatch, code, transcript):
     client, sender = channel
     short = code[:2]
+    monkeypatch.setenv('VOICE_CONFIRM_LANGUAGES', '')     # read-back is covered in test_multilingual.py
     provider = mock_extraction(monkeypatch)
     provider.queue = [{'language': short, 'facts': {'age': 62}, 'intent': 'give_info'}]
     seen = {}
@@ -415,7 +416,7 @@ def test_sarvam_stt_request_shape_and_language_normalisation(monkeypatch):
     original = httpx.Client
     monkeypatch.setattr(httpx, 'Client', lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
     out = speech.stt(base64.b64encode(_wav()).decode(), 'auto')
-    assert out == {'text': 'मी शेतकरी आहे', 'language': 'mr'}
+    assert out == {'text': 'मी शेतकरी आहे', 'language': 'mr', 'confidence': None}
     body = seen[0].content
     assert str(seen[0].url) == 'https://api.sarvam.ai/speech-to-text'
     assert b'saaras:v3' in body and b'transcribe' in body and b'audio/wav' in body

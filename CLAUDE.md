@@ -338,6 +338,7 @@ python -m saathi [--worker] [--debug]                   # live: chat through the
 python -m worker [--once|--batch N|--status]            # live: background agent lanes
 python -m stt_service                                   # local speech-to-text service (requirements-stt.txt; docs/LOCAL_STT.md)
 python scripts/bench_stt.py --audio-dir D --model-dir M  # STT WER/CER, CPU latency, memory
+python scripts/voice_smoke_server.py; python scripts/voice_browser_smoke.py mic.wav  # real-Chrome /voice check (docs/BROWSER_VOICE.md)
 python -m agents.eval --live [--pace S] [reader|verifier] # live: score each agent on its gold set
 python scripts/bench_llm.py [provider:model ...]   # compare models (uses tokens)
 .\start.ps1 [-NoWeb|-Update|-Stats|-Test|-Debug]   # Windows launcher (start.bat = double-click)

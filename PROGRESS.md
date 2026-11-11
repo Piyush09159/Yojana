@@ -12,11 +12,57 @@ This file is the project's history, newest entry first. Read it top to bottom to
 |---|---|
 | Version | v2.8 integration: refactor (v2.4 deployment, v2.5 citizen experience, WhatsApp, voice, Redis cache, scheme alerts) + scheme database + agent orchestration |
 | Last updated | 2026-11-11 |
-| Tests | 611 passed, 14 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (6/6 passed locally) |
+| Tests | 709 passed, 14 skipped offline (no network); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (54/54 STT tests passed in the STT venv); real-Chrome /voice smoke via scripts/voice_browser_smoke.py |
 | Phase | refactor demo plus PostgreSQL scheme catalog (SCHEME_DATABASE_URL), five agents, background job lanes |
 | Schemes | 267 public scheme records in data/schemes.db; 270 in the Neon catalog; 523 pages queued |
 | Eval | eligibility 36/36, start-with 12/12, name matcher P=R=1.00 (small sets); Reader agent 52/53 (98%); Verifier 5/5 caught, 0/3 wrongly dropped |
-| Next task | Deploy yojana-stt (docs/LOCAL_STT.md), switch yojana-api to STT_PROVIDER=local, live hi/mr/en voice-note test; benchmark IndicConformer or a Marathi Whisper (Marathi CER 0.55 with whisper small) |
+| Next task | Review/commit feat/multilingual-conversation-ux; deploy; run the WhatsApp checklist (docs/WHATSAPP_MENUS.md) incl. interactive lists on real Android/iOS before setting WAHA_INTERACTIVE_LISTS=true; mobile-browser checklist (docs/BROWSER_VOICE.md); Marathi STT (IndicConformer benchmark) |
+
+---
+
+## WhatsApp menus, multilingual switching and browser-voice reliability: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `feat/multilingual-conversation-ux` (from `origin/refactor` at 2638212). Not committed, pushed or deployed.
+
+**Why:** owner request: easier WhatsApp onboarding, language switching at any point, more reliable browser voice, without disturbing WAHA → local STT → conversation.
+
+**What:**
+* **WhatsApp menus** (`web/whatsapp_menu.py`, `web/waha_bridge.py`):
+  * YOJANA opens a trilingual language menu, and choosing a language opens the main menu (Chat, Browser voice call, Scheme updates, Change language).
+  * Options use stable ids `lang:*` / `menu:*`. They are recognised by WAHA NOWEB list reply `selectedRowId` (payload checked in WAHA's source), the row title, a number (only while that menu is open, at most 1 h), or words in en/hi/mr.
+  * Interactive lists go via `POST /api/sendList` when `WAHA_INTERACTIVE_LISTS=true`, with automatic numbered-text fallback. Default is off until real phones are checked.
+  * MENU, LANGUAGE, HELP and STOP work at any time. An invalid number repeats the menu. A normal message or voice note never needs a menu choice.
+  * The assessment is never restarted. The command chain was moved into `_handle()` (same statuses, outbox and dedupe).
+* **Two language concepts** (`core/language_detect.py`, migration 005 `channel_menus`, `state.preferred_lang`):
+  * The preferred language (an explicit choice) wins; the turn language (deterministic detection, including code-mixed and romanised hi/mr) is used when no preference exists.
+  * When detection is unsure, the previous language is kept. A one-time switch hint is sent when someone writes in another language.
+  * Explicit switches ("मराठीत बोला", "speak in English", "Hindi") are recognised only as whole messages. They make no model call; facts, case id and the pending question are kept, and the question is re-asked.
+  * The same switch works in `/api/v2/conversation` and the voice page.
+* **Voice read-back:**
+  * The STT service now returns `confidence`.
+  * A voice note that states a number is read back ("मी ऐकले: …") before use when the language is Marathi (`VOICE_CONFIRM_LANGUAGES`) or confidence is below 0.75 (`VOICE_CONFIRM_BELOW`).
+  * The threshold comes from 20 FLEURS clips: Marathi scored 0.61–0.76 even at CER 1.0. YES uses the note, NO or anything else discards it.
+  * The pending transcript and reply are sealed at rest. Never Sarvam.
+* **Browser voice** (`web/voice.py`, `web/static/voice.*`):
+  * Audit of existing behaviour documented.
+  * Microphone permission diagnostics; energy VAD (auto-stop on pause, give up on silence, 15 s cap).
+  * Seven explicit states; stale-response epochs; language change mid-session (`POST /api/voice/{cid}/language`).
+  * Offline retry with the same request id; refresh recovery including the unsent turn; autoplay-blocked handling; iOS recorder format.
+  * Handoff opens in the WhatsApp language; uncertain numbers wait for Send.
+  * `BROWSER_STT_MODE` and `TTS_PROVIDER` are configured separately; recordings use local STT when configured.
+* **Docs:** docs/WHATSAPP_MENUS.md, docs/BROWSER_VOICE.md (new; example messages, payload, flow, EasyPanel, checklists, limitations), LOCAL_STT.md, EASYPANEL_NEON_DEPLOYMENT.md, `.env.example`, CLAUDE.md.
+
+**Tests:**
+* tests/test_whatsapp_menus.py (38): list ids, fallback, row title, numbers, words, invalid choice, menu during assessment, updates consent, STOP, duplicate events, opt-in silence, log privacy.
+* tests/test_multilingual.py (55): detection, en→mr→hi switching with the case kept, code-mix, voice then text, read-back yes/no/replace, STT timeout, voice language change, handoff language, STT/TTS split, reconnect idempotency.
+* tests/test_voice_page.py (4); confidence unit test.
+* Updated intentionally: activation now shows the language menu (test_whatsapp_final, test_waha_lid, test_citizen_v25, test_agentx_demo); "number after YOJANA is data" became "number answering a question is data"; `confidence` in STT results.
+* Results: **709 passed, 14 skipped**. STT venv: 54 passed (real model, service, local STT).
+* Real headless Chrome 157 with a fake mic (Hindi FLEURS clip) and the real local STT: mic denied → typed works; idle→listening→transcribing→thinking→speaking in 17.1 s (STT 9.0 s); language change; offline retry; refresh restored 5 turns; 390 px layout with no overflow; no page errors.
+
+**Not verified:** interactive lists on real phones; real Android/iOS browsers; live WAHA; Sarvam TTS (not called).
+
+**Next:** owner review and commit; deploy; WhatsApp and mobile checklists; then decide `WAHA_INTERACTIVE_LISTS`.
 
 ---
 

@@ -9,6 +9,7 @@ The output is always in the spoken language's own script. Nothing is translated.
 """
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
@@ -75,9 +76,28 @@ class FasterWhisperEngine:
             # temperature 0 only: no fallback re-decoding loops (one Marathi clip took 53 s with the
             # default 0.0..1.0 schedule and still produced invented text). Bounded, deterministic.
             temperature=0.0, vad_filter=True, condition_on_previous_text=False, without_timestamps=True)
+        segments = list(segments)
         text = ' '.join(segment.text.strip() for segment in segments).strip()
         return {'text': text, 'language': language,
-                'language_probability': round(float(dict(all_probs or []).get(language, 0.0)), 3)}
+                'language_probability': round(float(dict(all_probs or []).get(language, 0.0)), 3),
+                'confidence': confidence(segments)}
+
+
+def confidence(segments):
+    """Mean per-token probability of the decoded text, exp(avg_logprob) weighted by token count,
+    0..1, or None when nothing was decoded. A rough signal used only to ask the citizen to confirm
+    a number before it is used; not a calibrated accuracy."""
+    total = weight = 0.0
+    for segment in segments:
+        n = max(1, len(getattr(segment, 'tokens', None) or []))
+        logprob = getattr(segment, 'avg_logprob', None)
+        if logprob is None:
+            continue
+        total += float(logprob) * n
+        weight += n
+    if not weight:
+        return None
+    return round(math.exp(total / weight), 3)
 
 
 class IndicConformerEngine:

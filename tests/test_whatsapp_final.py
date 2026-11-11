@@ -26,8 +26,9 @@ def channel(persistent, monkeypatch):
 def test_activation(channel,word):
     client,sender=channel
     assert signed(client,word,'activate').json()['status']=='started'
-    assert '*Chat*' in sender.call_args.args[-1]
-    assert '1 Chat' not in sender.call_args.args[-1]
+    # Activation opens the trilingual language menu (numbered text; lists are opt-in, see test_whatsapp_menus.py).
+    menu=sender.call_args.args[-1]
+    assert '1. English' in menu and '2. हिंदी' in menu and '3. मराठी' in menu and '⁣' not in menu
 
 
 @pytest.mark.parametrize('word',['START','Yojana-Pilot','yojana saathi','tell me about yojana','yojanax','Chat','Call','1','2','सुरू'])
@@ -54,10 +55,11 @@ def note(identifier='note'):
 
 
 @pytest.mark.parametrize('number',['1','2'])
-def test_number_before_named_choice_is_data_not_menu(channel,monkeypatch,number):
+def test_number_answering_a_question_is_data_not_menu(channel,monkeypatch,number):
     client,sender=channel
     mock_extraction(monkeypatch)
-    signed(client,'YOJANA','activate')
+    signed(client,'YOJANA','activate');signed(client,'I am 62','first-message')   # menu closes on a normal message
+    mock_extraction(monkeypatch)
     assert signed(client,number,'numeric').json()['status']=='replied'
     with case_store.transaction() as tx:
         assert tx.execute('SELECT mode FROM channel_preferences').fetchone()['mode']=='chat'
