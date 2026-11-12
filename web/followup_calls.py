@@ -12,9 +12,12 @@ Order of events, each a separate, auditable step:
   5. The runner re-checks everything at dial time (flag, consent not revoked, chat still opted in,
      review still confirmed, PDF sent, quiet hours, consent age) and then calls Bolna once.
 
-Phone numbers: only a WhatsApp phone JID (<digits>@c.us) gives a number WhatsApp itself verified;
-it is shown back to the citizen (last 4 digits) before they consent. An opaque @lid is NEVER turned
-into a number, so @lid chats are not offered a call (a future owner-bound OTP form could add one).
+Phone numbers: a WhatsApp phone JID (<digits>@c.us) gives a number WhatsApp itself verified. For an
+opaque @lid chat the number comes only from WAHA's authenticated GET /api/{session}/lids/{lid}
+(web/lid_resolver.py), validated as a phone JID on the allow-list. LID digits are NEVER turned into a
+number. The chat identity stays the LID; the number is sealed on the delivery row, shown back (last 4
+digits) in the offer, and used only if the same LID chat then replies CALL ME. A LID WAHA cannot map
+is skipped safely (CALL_FOLLOWUP_SKIPPED lid_unmapped); there is no OTP verification flow.
 The number is sealed at rest and wiped as soon as Bolna accepts or refuses the call.
 
 Crash safety: a row is set to 'dialing' and committed before the HTTP request. A 'dialing' row whose
@@ -221,7 +224,7 @@ def choose(tx, chat_hash, chat, lang, event_id, accept, version=None):
         if not call:
             tx.execute('INSERT INTO call_consents VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING',
                        (uuid.uuid4().hex, chat_hash, d['id'], 'followup_call', 'declined', event_id, now, None, None))
-        tx.execute("UPDATE result_deliveries SET call_offer='declined',updated_at=? WHERE id=?", (now, d['id']))
+        tx.execute("UPDATE result_deliveries SET call_offer='declined',call_phone_cipher=NULL,updated_at=? WHERE id=?", (now, d['id']))
         return 'call_declined', DECLINED[lang]
     # accept
     if call:
@@ -236,11 +239,19 @@ def choose(tx, chat_hash, chat, lang, event_id, accept, version=None):
         if existing:                                          # a decline is final for this shortlist
             return 'call_unavailable', UNAVAILABLE[lang]
     phone = trusted_phone(chat)
+    if not phone and d['call_phone_cipher'] and re.fullmatch(r'[0-9]{1,20}@lid', chat or ''):
+        # @lid chat: the number WAHA mapped for THIS delivery's chat when the offer was made (the citizen
+        # saw its last 4 digits). Re-validated; the LID digits are never used.
+        try:
+            phone = trusted_phone(unseal(d['call_phone_cipher']).lstrip('+') + '@c.us')
+        except Exception:
+            phone = None
     if not enabled() or not configured() or not phone or now - (d['call_offered_at'] or 0) > OFFER_TTL:
         return 'call_unavailable', UNAVAILABLE[lang]
     if not review.mark_once(tx, chat_hash, d['version'], 'call_consent'):
         return 'call_already_scheduled', ALREADY[lang]
     consent_id = uuid.uuid4().hex
+    tx.execute("UPDATE result_deliveries SET call_phone_cipher=NULL WHERE id=?", (d['id'],))
     tx.execute('INSERT INTO call_consents VALUES(?,?,?,?,?,?,?,?,?)',
                (consent_id, chat_hash, d['id'], 'followup_call', 'granted', event_id, now, None, None))
     tx.execute('INSERT INTO followup_calls(id,delivery_id,chat_hash,consent_id,phone_cipher,status,due_at,created_at,updated_at) '

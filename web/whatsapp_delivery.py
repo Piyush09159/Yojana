@@ -26,7 +26,8 @@ import httpx
 
 from . import case_store
 from . import result_review as review
-from .channel_security import unseal
+from . import lid_resolver
+from .channel_security import seal, unseal
 from .diagnostics import emit
 from .pdf_client import (PdfAuthError, PdfClient, PdfNotConfigured, PdfRejected, PdfServiceError,
                          PdfUnavailable, guide_from_cards)
@@ -233,6 +234,25 @@ def run_offer_pass(now=None, limit=5):
                 continue
             chat = unseal(row['address_cipher'])
             phone = calls.trusted_phone(chat)
+            lid_phone = False
+            if not phone and lid_resolver.is_lid(chat):
+                # @lid: ask WAHA which number WhatsApp maps it to. The chat identity stays the LID.
+                try:
+                    url, key, session = _waha()
+                    outcome, phone = lid_resolver.resolve(url, key, session, chat)
+                except Exception:                  # WAHA not configured
+                    outcome, phone = 'error', None
+                if outcome == 'error':
+                    attempts = row['call_offer_attempts'] + 1
+                    tx.execute('UPDATE result_deliveries SET call_offer=?,call_offer_attempts=?,updated_at=? WHERE id=?',
+                               ('unavailable' if attempts >= 3 else 'pending', attempts, now, row['id']))
+                    emit('CALL_FOLLOWUP_SKIPPED', detail='lid_lookup_failed', attempt=attempts)
+                    continue
+                if not phone:                      # unmapped / invalid: skip safely, no phone verification flow
+                    tx.execute("UPDATE result_deliveries SET call_offer='unavailable',updated_at=? WHERE id=?", (now, row['id']))
+                    emit('CALL_FOLLOWUP_SKIPPED', detail='lid_' + outcome)
+                    continue
+                lid_phone = True
             if not phone:
                 tx.execute("UPDATE result_deliveries SET call_offer='unavailable',updated_at=? WHERE id=?", (now, row['id']))
                 emit('CALL_FOLLOWUP_SKIPPED', detail='no_trusted_phone')
@@ -248,8 +268,8 @@ def run_offer_pass(now=None, limit=5):
                            ('failed' if attempts >= 3 else 'pending', attempts, now, row['id']))
                 emit('WAHA_REPLY_DELIVERY_FAILED', stage='call_offer', detail=type(exc).__name__)
                 continue
-            tx.execute("UPDATE result_deliveries SET call_offer='offered',call_offered_at=?,updated_at=? WHERE id=?",
-                       (now, now, row['id']))
+            tx.execute("UPDATE result_deliveries SET call_offer='offered',call_offered_at=?,call_phone_cipher=?,updated_at=? WHERE id=?",
+                       (now, seal(phone) if lid_phone else None, now, row['id']))
             _menu_state(tx, row['chat_hash'], menu='call', menu_at=now)
             offered += 1
     return offered

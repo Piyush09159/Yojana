@@ -377,7 +377,7 @@ def cancel_downstream(tx, chat_hash, reason):
     now = time.time()
     tx.execute("""UPDATE result_deliveries SET pdf_status='cancelled',cancel_reason=?,updated_at=?,lease_owner=NULL,lease_until=NULL
                   WHERE chat_hash=? AND pdf_status IN ('waiting','queued','retrying','generating')""", (reason, now, chat_hash))
-    tx.execute("""UPDATE result_deliveries SET call_offer='expired',updated_at=?
+    tx.execute("""UPDATE result_deliveries SET call_offer='expired',call_phone_cipher=NULL,updated_at=?
                   WHERE chat_hash=? AND call_offer IN ('pending','offered')""", (now, chat_hash))
     tx.execute("""UPDATE result_deliveries SET schemes_status='cancelled',updated_at=?
                   WHERE chat_hash=? AND schemes_status='queued'""", (now, chat_hash))
@@ -406,7 +406,7 @@ def cancel_all(tx, chat_hash, reason='stop'):
     cancel_downstream(tx, chat_hash, reason)
     tx.execute("""UPDATE result_reviews SET status='cancelled',closed_at=?,close_reason=?
                   WHERE chat_hash=? AND status IN ('awaiting','changing','confirmed')""", (now, reason, chat_hash))
-    tx.execute("""UPDATE result_deliveries SET address_cipher=NULL,snapshot=NULL,cancelled_at=COALESCE(cancelled_at,?),
+    tx.execute("""UPDATE result_deliveries SET address_cipher=NULL,snapshot=NULL,call_phone_cipher=NULL,cancelled_at=COALESCE(cancelled_at,?),
                   cancel_reason=COALESCE(cancel_reason,?),updated_at=? WHERE chat_hash=?""", (now, reason, now, chat_hash))
     tx.execute("UPDATE followup_calls SET phone_cipher='',updated_at=? WHERE chat_hash=?", (now, chat_hash))
     tx.execute('UPDATE call_consents SET revoked_at=?,revoke_reason=? WHERE chat_hash=? AND revoked_at IS NULL',

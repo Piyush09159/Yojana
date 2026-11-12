@@ -68,7 +68,7 @@ STOP -> cancelled, from any state
 | PDF only after the scheme text was accepted | `pdf_status` moves `waiting -> queued` only in the outbox success path (`result_review.event_sent`). |
 | Call only after text + PDF accepted, explicit consent, trusted number | Offer is sent only when `pdf_status=sent`; CALL ME writes `call_consents`; the runner re-checks everything at dial time. |
 | No duplicate calls across restarts | Row committed as `dialing` before the HTTP request; an expired `dialing` lease becomes `failed (interrupted)`, never redialled. Timeouts are not retried (could be ringing); only connect errors and 429/5xx are retried (max 3 tries). Bolna's own `retry_config` is disabled. |
-| No number from @lid | Only `<digits>@c.us` (WhatsApp-verified number, country code in `BOLNA_ALLOWED_COUNTRY_CODES`, default 91) is offered; the last 4 digits are shown before consent. @lid chats get no offer. |
+| No number from @lid | `<digits>@c.us` (country code in `BOLNA_ALLOWED_COUNTRY_CODES`, default 91) is used directly. For `@lid` chats the number comes only from WAHA `GET /api/{session}/lids/{lid}` (`web/lid_resolver.py`), validated as an allowed phone JID, sealed on the delivery row, shown (last 4 digits) in the offer and used only if that same LID chat replies CALL ME. LID digits are never used as a number. Unmapped/invalid/failed lookups skip safely (`CALL_FOLLOWUP_SKIPPED lid_unmapped|lid_invalid|lid_lookup_failed`). |
 | Calls never change facts | The follow-up webhook updates only `followup_calls` (status, provider status). Transcripts and extracted data are not stored. |
 | Exactly-once is **not** claimed | WAHA acceptance is not a handset receipt. A crash between WAHA accepting the file and the commit can resend it once after the 3-minute lease. |
 
@@ -198,7 +198,7 @@ Keep the tables; never drop them or volumes.
 
 ## 9. Not done / to verify live
 
-* Owner-bound OTP form for @lid chats: not built. @lid chats get no call offer.
+* Owner-bound OTP form for @lid chats WAHA cannot map: not built; those chats are skipped safely (no call offer).
 * India telemarketing/service-call rules, DND (NCPR) scrubbing and consent wording: need legal review.
   The code enforces opt-in, one call, quiet hours and revocation only.
 * NOWEB list rendering on real Android/iOS, live WAHA `sendFile` with a real PDF, Render cold start,

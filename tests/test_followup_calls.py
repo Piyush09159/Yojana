@@ -1,5 +1,5 @@
 """Consented follow-up calls after a delivered shortlist: separate opt-in, trusted numbers only (never
-from @lid), one call per shortlist across retries and restarts, quiet hours, revocation, Bolna
+from @lid digits), one call per shortlist across retries and restarts, quiet hours, revocation, Bolna
 status webhooks that never touch the profile."""
 import time
 from unittest.mock import Mock
@@ -28,8 +28,8 @@ def _daytime():
     clock, so consent written with the real time is never older than its 24 h limit."""
     now = time.time()
     minute = ((now + 19800) % 86400) // 60
-    if 9 * 60 <= minute < 19 * 60:
-        return now
+    if 9 * 60 <= minute < 18 * 60:
+        return now + 600          # margin: queued work is due a few seconds after the real clock
     ten = ist_10(now)
     return ten if ten > now else ten + 86400
 
@@ -130,13 +130,106 @@ def test_stop_and_change_cancel_a_queued_call(phone):
 
 # ---------- 10. @lid and trusted numbers ----------
 
-def test_lid_chat_is_never_offered_or_called(phone):
+def lids(monkeypatch, response):
+    """Stub WAHA GET /api/{session}/lids/{lid}. response: httpx.Response or an exception."""
+    from web import lid_resolver
+    get = Mock(side_effect=response if isinstance(response, BaseException) else None,
+               return_value=None if isinstance(response, BaseException) else response)
+    monkeypatch.setattr(lid_resolver.httpx, 'get', get)
+    return get
+
+
+def lid_reply(pn, lid=LID, status=200):
+    return httpx.Response(status, json={'lid': lid, 'pn': pn}, request=httpx.Request('GET', 'http://waha:3000/x'))
+
+
+def test_lid_without_mapping_is_skipped_safely(phone, monkeypatch):
+    get = lids(monkeypatch, lid_reply(None))
     delivered(phone, chat=LID, now=DAYTIME)
-    assert rows('SELECT call_offer FROM result_deliveries')[0]['call_offer'] == 'unavailable'
+    assert rows('SELECT call_offer,call_phone_cipher FROM result_deliveries')[0] == {'call_offer': 'unavailable', 'call_phone_cipher': None}
+    assert get.call_args.args == (f'http://waha:3000/api/default/lids/{LID}',)
+    assert get.call_args.kwargs['headers'] == {'X-Api-Key': 'fixture-api-key'}
     assert say(phone, 'call me', 'm-yes', LID) == 'call_unavailable'
     run(DAYTIME + 60)
     phone.placed.assert_not_called()
     assert calls_rows() == []
+
+
+def test_lid_with_waha_mapping_needs_separate_call_me_consent(phone, monkeypatch):
+    lids(monkeypatch, lid_reply('919876543210@c.us'))
+    delivered(phone, chat=LID, now=DAYTIME)
+    assert rows('SELECT call_offer FROM result_deliveries')[0]['call_offer'] == 'offered'
+    cipher = rows('SELECT call_phone_cipher FROM result_deliveries')[0]['call_phone_cipher']
+    assert cipher.startswith('sealed:') and '9876543210' not in cipher and '900000' not in cipher
+    assert 'ending in 3210' in texts(phone)[-1]
+    run(DAYTIME + 60)                                      # PROCEED alone never dials
+    phone.placed.assert_not_called()
+    assert rows('SELECT * FROM call_consents') == [] and calls_rows() == []
+    assert say(phone, 'call me', 'm-yes', LID) == 'call_scheduled'
+    assert rows('SELECT call_phone_cipher FROM result_deliveries')[0]['call_phone_cipher'] is None
+    run(DAYTIME + 3600)
+    phone.placed.assert_called_once()
+    assert phone.placed.call_args.args[1] == '+919876543210'
+    assert say(phone, 'call me', 'm-yes2', LID) == 'call_already_started'
+    run(DAYTIME + 7200)
+    phone.placed.assert_called_once()
+
+
+def test_lid_call_can_be_cancelled_and_stop_scrubs(phone, monkeypatch):
+    lids(monkeypatch, lid_reply('919876543210@c.us'))
+    delivered(phone, chat=LID, now=DAYTIME)
+    assert say(phone, 'no call', 'm-no', LID) == 'call_declined'
+    assert rows('SELECT call_phone_cipher FROM result_deliveries')[0]['call_phone_cipher'] is None
+    phone.placed.assert_not_called()
+
+
+def test_stop_before_consent_scrubs_resolved_number(phone, monkeypatch):
+    lids(monkeypatch, lid_reply('919876543210@c.us'))
+    delivered(phone, chat=LID, now=DAYTIME)
+    assert say(phone, 'STOP', 'm-stop', LID) == 'stopped'
+    assert rows("SELECT COUNT(*) AS n FROM result_deliveries WHERE call_phone_cipher IS NOT NULL")[0]['n'] == 0
+    assert say(phone, 'call me', 'm-yes', LID) != 'call_scheduled'
+    phone.placed.assert_not_called()
+
+
+@pytest.mark.parametrize('pn', ['900000000000001@c.us', '14155550100@c.us', '919876543210@lid', '+919876543210',
+                                '919876543210@g.us', 12345, {'x': 1}])
+def test_lid_mapping_must_be_an_allowed_phone_jid(phone, monkeypatch, pn):
+    lids(monkeypatch, lid_reply(pn))
+    delivered(phone, chat=LID, now=DAYTIME)
+    assert rows('SELECT call_offer,call_phone_cipher FROM result_deliveries')[0] == {'call_offer': 'unavailable', 'call_phone_cipher': None}
+    assert say(phone, 'call me', 'm-yes', LID) == 'call_unavailable'
+    phone.placed.assert_not_called()
+
+
+def test_lid_mapping_for_a_different_lid_is_rejected(phone, monkeypatch):
+    lids(monkeypatch, lid_reply('919876543210@c.us', lid='111111111111111@lid'))
+    delivered(phone, chat=LID, now=DAYTIME)
+    assert rows('SELECT call_offer FROM result_deliveries')[0]['call_offer'] == 'unavailable'
+
+
+def test_lid_lookup_errors_retry_then_give_up(phone, monkeypatch):
+    get = lids(monkeypatch, httpx.ConnectError('down'))
+    delivered(phone, chat=LID, now=DAYTIME)
+    assert rows('SELECT call_offer,call_offer_attempts FROM result_deliveries')[0] == {'call_offer': 'pending', 'call_offer_attempts': 2}
+    run(DAYTIME + 1)
+    assert rows('SELECT call_offer FROM result_deliveries')[0]['call_offer'] == 'unavailable' and get.call_count == 3
+    lids(monkeypatch, lid_reply('919876543210@c.us', status=500))
+    from web import lid_resolver
+    assert lid_resolver.resolve('http://waha:3000', 'k', 'default', LID) == ('error', None)
+    lids(monkeypatch, lid_reply(None, status=404))
+    assert lid_resolver.resolve('http://waha:3000', 'k', 'default', LID) == ('unmapped', None)
+
+
+def test_lid_lookup_never_runs_for_phone_jid_or_bad_ids(phone, monkeypatch):
+    get = lids(monkeypatch, lid_reply('919876543210@c.us'))
+    delivered(phone, now=DAYTIME)
+    get.assert_not_called()
+    from web import lid_resolver
+    for bad in ('abc@lid', '../x@lid', '9876543210@c.us', ''):
+        assert lid_resolver.resolve('http://waha:3000', 'k', 'default', bad) == ('invalid', None)
+    assert lid_resolver.resolve('http://waha:3000', 'k', '../x', LID) == ('invalid', None)
+    get.assert_not_called()
 
 
 @pytest.mark.parametrize('chat,expected', [

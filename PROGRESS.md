@@ -12,11 +12,30 @@ This file is the project's history, newest entry first. Read it top to bottom to
 |---|---|
 | Version | v2.8 integration: refactor (v2.4 deployment, v2.5 citizen experience, WhatsApp, voice, Redis cache, scheme alerts) + scheme database + agent orchestration |
 | Last updated | 2026-11-12 |
-| Tests | 825 passed, 15 skipped offline (no network; PDF service tests need requirements-dev.txt); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (54/54 STT tests passed in the STT venv); real-Chrome /voice smoke via scripts/voice_browser_smoke.py |
+| Tests | 838 passed, 15 skipped offline (no network; PDF service tests need requirements-dev.txt); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (54/54 STT tests passed in the STT venv); real-Chrome /voice smoke via scripts/voice_browser_smoke.py |
 | Phase | refactor demo plus PostgreSQL scheme catalog (SCHEME_DATABASE_URL), five agents, background job lanes |
 | Schemes | 267 public scheme records in data/schemes.db; 270 in the Neon catalog; 523 pages queued |
 | Eval | eligibility 36/36, start-with 12/12, name matcher P=R=1.00 (small sets); Reader agent 52/53 (98%); Verifier 5/5 caught, 0/3 wrongly dropped |
 | Next task | Rotate the Bolna key/secret exposed on feature/call-agent; review PR feat/confirmed-results-pdf-bolna-followup; apply migrations 006/007 on a disposable Neon branch; deploy with flags off, then enable review gate -> PDF -> call (docs/RESULT_DELIVERY.md) |
+
+---
+
+## Fix CALL_FOLLOWUP_SKIPPED no_trusted_phone for @lid chats: 2026-11-12
+
+**Who:** Claude (Sonnet 5.5), branch `refactor`. Not deployed.
+
+**Why:** production logs showed the PDF guide delivered but no call offer for WhatsApp `@lid` users (`no_trusted_phone`).
+
+**What:**
+* `web/lid_resolver.py`: authenticated WAHA `GET /api/{session}/lids/{lid}`; the returned `pn` must be a phone JID that passes the same `trusted_phone` check (strict `<digits>@c.us`, country allow-list) and the response `lid` must match. Outcomes ok/unmapped/invalid/error; never raises, never logs ids or numbers. LID digits are never turned into a number.
+* `run_offer_pass`: for `@lid` it resolves, seals the number in new `result_deliveries.call_phone_cipher` (migration `008_lid_call_phone.sql`, additive) and sends the usual offer (last 4 digits). Chat identity stays the LID. Unmapped/invalid -> offer `unavailable` (`lid_unmapped`/`lid_invalid`); transport errors retry up to 3 passes (`lid_lookup_failed`).
+* `choose()`: CALL ME from the same LID chat is still a separate explicit consent; it moves the sealed number into `followup_calls` and clears the offer column. Decline, STOP, CHANGE/supersede also scrub `call_phone_cipher`. Quiet hours, idempotency, dial-time re-checks are unchanged.
+* **Not built:** owner-bound phone verification (OTP) for LIDs WAHA cannot map; those are skipped safely.
+* Tests: 9 new offline tests in `tests/test_followup_calls.py` (unmapped, mapped + separate consent + single call, decline, STOP scrub, invalid/foreign pn, mismatched lid, retry/give-up, no lookup for c.us/bad ids). Fixed a pre-existing time-of-day flake in that file (`DAYTIME` was frozen at import, so 20 tests failed between 09:00 and 18:00 IST).
+
+**Tests:** `python -m pytest -q`: 838 passed, 15 skipped.
+
+**Deploy:** run `python -m web.case_store`-style migrate (applies 008 automatically on startup/`case_store.migrate()`); no new env vars. Requires WAHA to expose the lids API.
 
 ---
 
