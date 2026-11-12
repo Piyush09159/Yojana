@@ -35,7 +35,7 @@ This file is the project's history, newest entry first. Read it top to bottom to
 
 **Tests:** `python -m pytest -q`: 838 passed, 15 skipped.
 
-**Deploy:** run `python -m web.case_store`-style migrate (applies 008 automatically on startup/`case_store.migrate()`); no new env vars. Requires WAHA to expose the lids API.
+**Deploy:** run `python -m web.migrate` (applies 008; the delivery worker also migrates on start); no new env vars. Requires WAHA to expose the lids API.
 
 ---
 
