@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scheme Saathi</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">स</span>
+      <div>
+        <h1>Scheme Saathi</h1>
+        <p class="tag" data-i18n="tagline">Finds government schemes you may be missing, from official websites</p>
+      </div>
+    </div>
+    <label class="lang">
+      <span data-i18n="language">Language</span>
+      <select id="lang">
+        <option value="en">English</option>
+        <option value="hi">हिन्दी</option>
+        <option value="mr">मराठी</option>
+      </select>
+    </label>
+  </header>
+
+  <main class="layout">
+    <!-- 1. Form -->
+    <section class="panel form-panel">
+      <h2 data-i18n="about_you">About you</h2>
+      <p class="muted small" data-i18n="privacy">We never ask for Aadhaar, bank or phone numbers. Fill what you know; leave the rest blank.</p>
+      <form id="profile-form" autocomplete="off"></form>
+      <label class="check"><input type="checkbox" id="web" checked> <span data-i18n="search_web">Search official websites (1-3 min)</span></label>
+      <button id="start" class="primary" type="button" data-i18n="find">Find my schemes</button>
+      <p id="form-error" class="error" hidden></p>
+    </section>
+
+    <!-- 2. Investigation + questions -->
+    <section class="panel talk-panel">
+      <div class="status-row">
+        <h2 data-i18n="saathi">Saathi</h2>
+        <span id="status" class="pill" data-i18n="status_idle">Waiting for your details</span>
+      </div>
+      <div id="question" class="question" hidden></div>
+      <ol id="timeline" class="timeline" aria-live="polite"></ol>
+      <form id="ask-form" class="ask" hidden>
+        <input id="ask-text" type="text" data-i18n-placeholder="ask_placeholder" placeholder="Ask about any scheme, e.g. which documents do I need?">
+        <button class="secondary" type="submit" data-i18n="ask">Ask</button>
+      </form>
+    </section>
+
+    <!-- 3. Results -->
+    <section class="panel results-panel">
+      <div class="status-row">
+        <h2 data-i18n="results">Your schemes</h2>
+        <span id="counts" class="muted small"></span>
+      </div>
+      <div id="results"><p class="muted" data-i18n="no_results">Results appear here as soon as you start.</p></div>
+    </section>
+  </main>
+
+  <dialog id="rules-dialog">
+    <form method="dialog"><button class="close" aria-label="Close">×</button></form>
+    <div id="rules-body"></div>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

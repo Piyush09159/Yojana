@@ -8,6 +8,7 @@ profile_json_schema(names)     -> JSON schema for the LLM extractor
 from __future__ import annotations
 
 import re
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
@@ -65,9 +66,44 @@ def check_value(name: str, value, fields: dict | None = None):
         raise FieldError(f"{name}: expected text, got {value!r}")
     value = value.strip()
     if spec.get("normalize") == "key":                  # "Beed" / "Dharashiv" -> "beed" / "osmanabad"
+        if re.search(r"[ऀ-ॿ]", value):                 # "बीड" -> "beed"
+            from .name_match import devanagari_to_latin
+            value = devanagari_to_latin(value)
+        else:                                           # "Puné" -> "pune"
+            value = "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.combining(c))
         value = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
         value = (spec.get("aliases") or {}).get(value, value)
+        if name == "district":
+            value = known_district(value) or value
     return value
+
+
+@lru_cache(maxsize=None)
+def _districts() -> dict[str, str]:
+    """Every known district key and alternate name -> the district key (schemes/geo/districts.yaml)."""
+    path = SCHEMES_DIR / "geo" / "districts.yaml"
+    if not path.exists():
+        return {}
+    out: dict[str, str] = {}
+    for districts in (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).values():
+        for key, aliases in (districts or {}).items():
+            out[key] = key
+            for a in aliases or []:
+                out[a] = key
+    return out
+
+
+def known_district(value: str) -> str | None:
+    """The known district this spelling means, or None. Exact key or alias first; otherwise the
+    one district that sounds the same ("bhid" and "beed" both reduce to "bid"). Two candidates that
+    sound alike are ambiguous, so neither is chosen."""
+    names = _districts()
+    if value in names:
+        return names[value]
+    from .name_match import phonetic
+    sound = phonetic(value.replace("_", ""))
+    hits = {key for name, key in names.items() if phonetic(name.replace("_", "")) == sound}
+    return hits.pop() if len(hits) == 1 else None
 
 
 def validate_profile(profile: dict, fields: dict | None = None) -> tuple[dict, list[str]]:

@@ -50,18 +50,24 @@ class WebSession:
         self.shortlist: dict | None = None
         self.state = "starting"            # investigating | asking | done
         self.created = time.time()
+        self.on_change = None
+        self.next_seq = 0
 
     # ---------- events ----------
     def emit(self, kind: str, data: dict | None = None) -> None:
         with self.cond:
-            self.events.append({"seq": len(self.events), "kind": kind, "data": data or {}})
+            self.events.append({"seq": self.next_seq, "kind": kind, "data": data or {}})
+            self.next_seq += 1
+            if self.on_change:
+                self.events = self.events[-200:]
+                self.on_change(self)
             self.cond.notify_all()
 
     def wait_events(self, after: int, timeout: float = 15.0) -> list[dict]:
         with self.cond:
-            if len(self.events) <= after:
+            if not self.events or self.events[-1]['seq'] < after:
                 self.cond.wait(timeout)
-            return self.events[after:]
+            return [event for event in self.events if event['seq'] >= after]
 
     # ---------- flow ----------
     def start(self) -> None:
@@ -72,7 +78,7 @@ class WebSession:
             try:
                 fn(*a)
             except Exception as e:  # keep the page alive and tell the user
-                self.emit("notice", {"text": f"Something went wrong: {type(e).__name__}: {str(e)[:150]}"})
+                self.emit("notice", {"text": 'Investigation unavailable. Check service configuration and retry.'})
                 self.emit("done")
         return run
 
@@ -121,7 +127,7 @@ class WebSession:
                         u = understand(self.extractor, text, self.pending)
                         stored = u.facts
                     except LLMError as e:
-                        return {"error": f"Could not read the answer: {e}"}
+                        return {"error": 'Language service unavailable. Retry without sharing sensitive information.'}
             self.profile.update(stored)
             self.pending = None
         self.emit("answer_recorded", {"facts": stored})
@@ -153,7 +159,7 @@ class WebSession:
         try:
             reply = explain.answer(self.agent, self.lang, text, context, [])
         except LLMError as e:
-            reply = f"Sorry, the language model failed: {str(e)[:120]}"
+            reply = 'Language service unavailable. Please retry shortly.'
         self.emit("reply", {"text": reply})
 
     # ---------- views ----------

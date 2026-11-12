@@ -10,15 +10,503 @@ This file is the project's history, newest entry first. Read it top to bottom to
 
 | | |
 |---|---|
-| Version | v2.3 consolidated website |
-| Last updated | 2026-10-29 |
-| Tests | 237 passed, 0 failed (standard Python 3.13) |
-| Phase | Public landing page, citizen dashboard, conversational API, Rescue and WAHA adapter; audited repository consolidation |
-| Schemes | 267 public scheme records; 1,008 crawl records; catalog preserved unchanged |
-| Eval | eligibility 36/36 on 12 personas; start-with 12/12; name matcher P=1.00 R=1.00 on 20 pairs (small self-labelled sets) |
-| Next task | V2.4 planning only after repository integration; live models, persistent case memory and WAHA remain unvalidated |
+| Version | v2.8 integration: refactor (v2.4 deployment, v2.5 citizen experience, WhatsApp, voice, Redis cache, scheme alerts) + scheme database + agent orchestration |
+| Last updated | 2026-11-12 |
+| Tests | 838 passed, 15 skipped offline (no network; PDF service tests need requirements-dev.txt); Postgres tests opt-in via TEST_DATABASE_URL; real-model STT tests opt-in via STT_TEST_MODEL_DIR (54/54 STT tests passed in the STT venv); real-Chrome /voice smoke via scripts/voice_browser_smoke.py |
+| Phase | refactor demo plus PostgreSQL scheme catalog (SCHEME_DATABASE_URL), five agents, background job lanes |
+| Schemes | 267 public scheme records in data/schemes.db; 270 in the Neon catalog; 523 pages queued |
+| Eval | eligibility 36/36, start-with 12/12, name matcher P=R=1.00 (small sets); Reader agent 52/53 (98%); Verifier 5/5 caught, 0/3 wrongly dropped |
+| Next task | Rotate the Bolna key/secret exposed on feature/call-agent; review PR feat/confirmed-results-pdf-bolna-followup; apply migrations 006/007 on a disposable Neon branch; deploy with flags off, then enable review gate -> PDF -> call (docs/RESULT_DELIVERY.md) |
 
 ---
+
+## Fix CALL_FOLLOWUP_SKIPPED no_trusted_phone for @lid chats: 2026-11-12
+
+**Who:** Claude (Sonnet 5.5), branch `refactor`. Not deployed.
+
+**Why:** production logs showed the PDF guide delivered but no call offer for WhatsApp `@lid` users (`no_trusted_phone`).
+
+**What:**
+* `web/lid_resolver.py`: authenticated WAHA `GET /api/{session}/lids/{lid}`; the returned `pn` must be a phone JID that passes the same `trusted_phone` check (strict `<digits>@c.us`, country allow-list) and the response `lid` must match. Outcomes ok/unmapped/invalid/error; never raises, never logs ids or numbers. LID digits are never turned into a number.
+* `run_offer_pass`: for `@lid` it resolves, seals the number in new `result_deliveries.call_phone_cipher` (migration `008_lid_call_phone.sql`, additive) and sends the usual offer (last 4 digits). Chat identity stays the LID. Unmapped/invalid -> offer `unavailable` (`lid_unmapped`/`lid_invalid`); transport errors retry up to 3 passes (`lid_lookup_failed`).
+* `choose()`: CALL ME from the same LID chat is still a separate explicit consent; it moves the sealed number into `followup_calls` and clears the offer column. Decline, STOP, CHANGE/supersede also scrub `call_phone_cipher`. Quiet hours, idempotency, dial-time re-checks are unchanged.
+* **Not built:** owner-bound phone verification (OTP) for LIDs WAHA cannot map; those are skipped safely.
+* Tests: 9 new offline tests in `tests/test_followup_calls.py` (unmapped, mapped + separate consent + single call, decline, STOP scrub, invalid/foreign pn, mismatched lid, retry/give-up, no lookup for c.us/bad ids). Fixed a pre-existing time-of-day flake in that file (`DAYTIME` was frozen at import, so 20 tests failed between 09:00 and 18:00 IST).
+
+**Tests:** `python -m pytest -q`: 838 passed, 15 skipped.
+
+**Deploy:** run `python -m web.migrate` (applies 008; the delivery worker also migrates on start); no new env vars. Requires WAHA to expose the lids API.
+
+---
+
+## Confirmed WhatsApp results, PDF guide over WhatsApp, consented Bolna follow-up call: 2026-11-12
+
+**Who:** Claude (Opus 5.5), branch `feat/confirmed-results-pdf-bolna-followup` from `origin/refactor` (535b2a5). Not deployed.
+
+**Why:** owner request: do not send scheme results on WhatsApp until the citizen has checked the recorded facts, send the guide as one PDF, and offer one optional automated follow-up call with separate consent.
+
+**What:**
+* **Ported** `feat/pdf-guides` by merge (pdf_service, `web/pdf_client.py`, `web/pdf_api.py`, Render files, tests; CLAUDE/PROGRESS conflicts resolved by keeping both sides). From `feature/call-agent`, only `web/bolna.py` (verification calls, now behind `BOLNA_VERIFICATION_ENABLED`, terminal no-answer/failed statuses fixed), its migration (renamed `006_bolna_verification.sql`), tests and the webhook body limit. Its `deploy/.env.example` with live-looking Bolna values was **not** ported; those values must be revoked in Bolna.
+* **Review gate** (`web/result_review.py`, `web/waha_bridge.py`, `SCHEME_REVIEW_CONFIRMATION_ENABLED`): on assessment completion WhatsApp gets a short review of whitelisted facts (income as a band) with Proceed / Change / Help, as a NOWEB list (`review:<action>:<version>`) or numbered text, in en/hi/mr. Words and numbers work too. PROCEED re-hashes the profile, so a stale approval never releases old results. CHANGE lists numbered facts, asks the chosen question (short answers read by code) and uses the existing explicit-correction path; a new version needs a new PROCEED. HELP is context-aware and changes nothing. Language change re-shows an open review. Browser behaviour is unchanged.
+* **Delivery** (`web/whatsapp_delivery.py`, migration `007_result_delivery.sql`, `WHATSAPP_PDF_SEND_ENABLED`): after PROCEED the shortlist text goes through the existing outbox. Only when WAHA accepted it is one bundled PDF (up to 5 schemes, schemes without an official source left out and the citizen told) generated and sent with WAHA `/api/sendFile` (base64, PDF magic and size checked). Leases, 30 s/2 min/10 min backoff, max attempts, one localized failure notice, GUIDE to retry. Render cold start: `warm_up()` plus retries.
+* **Follow-up call** (`web/followup_calls.py`, `BOLNA_FOLLOWUP_ENABLED`): a separate Call me / No call offer only after the PDF was accepted, only for `<digits>@c.us` chats (never @lid), naming the last 4 digits and stating automated, independent, not government, no Aadhaar/OTP/bank. CALL ME stores consent evidence and queues one durable call about 8 s later. The runner re-checks flag, consent, opt-in, review and PDF, defers during quiet hours (IST 21:00-09:00), commits `dialing` before the HTTP call (no redial after crashes or timeouts), disables Bolna retries, wipes the number after use. The status webhook (path secret plus authoritative GET /executions) updates only the call row; late webhooks are ignored. NO CALL, CHANGE and STOP cancel queued calls.
+* **Runner** (`web/delivery_worker.py`): API-startup loop by default or `python -m web.delivery_worker`; `/api/health/delivery` shows flags and the last pass. STOP scrubs addresses, phone ciphers and snapshots; retention purge covers the new tables.
+* Docs: `docs/RESULT_DELIVERY.md` (runbook, env, Bolna agent script in en/hi/mr, checks, rollback); `docs/PDF_SERVICE.md`, `.env.example`, `deploy/.env.example` (empty placeholders), `deploy/smoke_imports.py`, CLAUDE.md.
+
+**Tests:** new `tests/test_whatsapp_approval.py` (16), `tests/test_whatsapp_pdf_delivery.py` (20), `tests/test_followup_calls.py` (34, incl. a voice transcript "call me" is not consent), `tests/test_bolna.py` (9). Full suite: **825 passed, 15 skipped**. Secret scan (detect-secrets): only existing placeholders/fixtures; the leaked Bolna values are absent from this branch.
+
+**Not verified:** migrations on PostgreSQL/Neon (SQLite only here); live WAHA sendFile and list rendering on phones; live Render; any live Bolna call or webhook body shape; India DND/consent compliance; OTP form for @lid (not built).
+
+**Next:** see Current state.
+
+---
+
+## WhatsApp menus, multilingual switching and browser-voice reliability: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `feat/multilingual-conversation-ux` (from `origin/refactor` at 2638212). Not committed, pushed or deployed.
+
+**Why:** owner request: easier WhatsApp onboarding, language switching at any point, more reliable browser voice, without disturbing WAHA → local STT → conversation.
+
+**What:**
+* **WhatsApp menus** (`web/whatsapp_menu.py`, `web/waha_bridge.py`):
+  * YOJANA opens a trilingual language menu, and choosing a language opens the main menu (Chat, Browser voice call, Scheme updates, Change language).
+  * Options use stable ids `lang:*` / `menu:*`. They are recognised by WAHA NOWEB list reply `selectedRowId` (payload checked in WAHA's source), the row title, a number (only while that menu is open, at most 1 h), or words in en/hi/mr.
+  * Interactive lists go via `POST /api/sendList` when `WAHA_INTERACTIVE_LISTS=true`, with automatic numbered-text fallback. Default is off until real phones are checked.
+  * MENU, LANGUAGE, HELP and STOP work at any time. An invalid number repeats the menu. A normal message or voice note never needs a menu choice.
+  * The assessment is never restarted. The command chain was moved into `_handle()` (same statuses, outbox and dedupe).
+* **Two language concepts** (`core/language_detect.py`, migration 005 `channel_menus`, `state.preferred_lang`):
+  * The preferred language (an explicit choice) wins; the turn language (deterministic detection, including code-mixed and romanised hi/mr) is used when no preference exists.
+  * When detection is unsure, the previous language is kept. A one-time switch hint is sent when someone writes in another language.
+  * Explicit switches ("मराठीत बोला", "speak in English", "Hindi") are recognised only as whole messages. They make no model call; facts, case id and the pending question are kept, and the question is re-asked.
+  * The same switch works in `/api/v2/conversation` and the voice page.
+* **Voice read-back:**
+  * The STT service now returns `confidence`.
+  * A voice note that states a number is read back ("मी ऐकले: …") before use when the language is Marathi (`VOICE_CONFIRM_LANGUAGES`) or confidence is below 0.75 (`VOICE_CONFIRM_BELOW`).
+  * The threshold comes from 20 FLEURS clips: Marathi scored 0.61–0.76 even at CER 1.0. YES uses the note, NO or anything else discards it.
+  * The pending transcript and reply are sealed at rest. Never Sarvam.
+* **Browser voice** (`web/voice.py`, `web/static/voice.*`):
+  * Audit of existing behaviour documented.
+  * Microphone permission diagnostics; energy VAD (auto-stop on pause, give up on silence, 15 s cap).
+  * Seven explicit states; stale-response epochs; language change mid-session (`POST /api/voice/{cid}/language`).
+  * Offline retry with the same request id; refresh recovery including the unsent turn; autoplay-blocked handling; iOS recorder format.
+  * Handoff opens in the WhatsApp language; uncertain numbers wait for Send.
+  * `BROWSER_STT_MODE` and `TTS_PROVIDER` are configured separately; recordings use local STT when configured.
+* **Docs:** docs/WHATSAPP_MENUS.md, docs/BROWSER_VOICE.md (new; example messages, payload, flow, EasyPanel, checklists, limitations), LOCAL_STT.md, EASYPANEL_NEON_DEPLOYMENT.md, `.env.example`, CLAUDE.md.
+
+**Tests:**
+* tests/test_whatsapp_menus.py (38): list ids, fallback, row title, numbers, words, invalid choice, menu during assessment, updates consent, STOP, duplicate events, opt-in silence, log privacy.
+* tests/test_multilingual.py (55): detection, en→mr→hi switching with the case kept, code-mix, voice then text, read-back yes/no/replace, STT timeout, voice language change, handoff language, STT/TTS split, reconnect idempotency.
+* tests/test_voice_page.py (4); confidence unit test.
+* Updated intentionally: activation now shows the language menu (test_whatsapp_final, test_waha_lid, test_citizen_v25, test_agentx_demo); "number after YOJANA is data" became "number answering a question is data"; `confidence` in STT results.
+* Results: **709 passed, 14 skipped**. STT venv: 54 passed (real model, service, local STT).
+* Real headless Chrome 157 with a fake mic (Hindi FLEURS clip) and the real local STT: mic denied → typed works; idle→listening→transcribing→thinking→speaking in 17.1 s (STT 9.0 s); language change; offline retry; refresh restored 5 turns; 390 px layout with no overflow; no page errors.
+
+**Not verified:** interactive lists on real phones; real Android/iOS browsers; live WAHA; Sarvam TTS (not called).
+
+**Next:** owner review and commit; deploy; WhatsApp and mobile checklists; then decide `WAHA_INTERACTIVE_LISTS`.
+
+---
+
+## Application-guide PDFs: new `pdf_service` for Render: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `feat/pdf-guides` (from `refactor` at PR #9). Not committed, pushed or deployed: the user does that.
+
+**Why:** team lead's brief. Citizens need a printable "how to apply" guide for their shortlisted schemes, in en/hi/mr, built only from verified catalog content, delivered as a browser download now and over WhatsApp later.
+
+**What:**
+* **New `pdf_service/` microservice** (own image `Dockerfile.pdf`, `requirements-pdf.txt`, Render Blueprint `render.yaml`). FastAPI + Jinja2 + WeasyPrint 70 + Segno; same pattern as `stt_service`.
+  * Endpoints: `GET /health`, `POST /api/v1/pdf/generate`, `POST /api/v1/pdf/generate-batch`, all PDF bytes.
+  * `models.py`: strict pydantic contract. Unknown fields are refused; lengths and counts are capped; URLs must be absolute http(s) with no credentials; control characters are rejected; scheme ids are unique. There is no deadline field, and the `ineligible` status is refused.
+  * `i18n.py`: en/hi/mr labels. Statuses are worded as "conditions we could check". The cover says the office decides, application is free, and never share Aadhaar/OTP. Scheme content is not translated, and the guide says so.
+  * `render.py` and templates:
+    * Autoescaped HTML; CSS inline.
+    * QR codes as inline SVG, only for https links on `gov.in`/`nic.in` (`PDF_QR_DOMAINS`).
+    * The WeasyPrint `URLFetcher` allows only `data:` URIs, so payload links are never fetched.
+    * A4 layout: a cover with the summary table, then one page per scheme. Per-language page footers.
+    * Noto Sans and Noto Sans Devanagari are embedded as subsets.
+  * `app.py`:
+    * Bearer tokens from `PDF_SERVICE_TOKENS`: comma-separated for rotation, at least 24 characters, compared in constant time. With no valid token the service fails closed (503 `not_configured`).
+    * Checks run in order: auth before the body is read, then the media type (415), the streaming body cap (413), and validation (422 with locations only, never the values).
+    * Bounded render slots (503 `busy` with `Retry-After`); 500 `render_failed` without details; `no-store` headers.
+    * The filename never contains the name. Logs hold counts only. No disk writes.
+* **Backend side:**
+  * `web/pdf_client.py`: httpx `PdfClient` with timeout, retries on connect errors, timeouts and 429/502/503/504 (honours `Retry-After`), typed errors (`PdfNotConfigured`, `PdfAuthError`, `PdfRejected`, `PdfUnavailable`), and `warm_up()` for Render cold starts. It refuses plain http to a non-local host. `guide_from_cards()` maps engine cards and catalog records to the payload and drops ineligible schemes and schemes without a source.
+  * `web/pdf_api.py`: `GET /api/v2/conversation/{id}/guide.pdf?lang=`. The owner check is the same as the conversation's; the shortlist is rebuilt by the engine from the stored profile; the PDF is streamed without being stored. The route returns 404 `pdf_disabled` until `PDF_SERVICE_URL` is set.
+  * `web/app.py`: +2 lines (router).
+* **Examples:** `scripts/make_pdf_examples.py` builds payloads for 3 synthetic people from the real engine and catalog. `python -m pdf_service.examples` renders them; this was run in the image, producing `pdf_service/examples/guide_{en,hi,mr}.pdf` and `guides_batch.pdf`.
+* **Config and docs:**
+  * `.env.example` (`PDF_SERVICE_URL/TOKEN/TIMEOUT/RETRIES`)
+  * `requirements-dev.txt` (jinja2, segno)
+  * CI workflow (installs jinja2 and segno so the new tests run)
+  * docs/PDF_SERVICE.md: API spec, environment variables, content rules, privacy, Render steps, rotation
+  * README section, CLAUDE.md commands
+* **Not touched:** WhatsApp voice, STT, agents/orchestrator, Neon migrations, Redis, the frontend.
+
+**Tests:**
+* tests/test_pdf_service.py (37, offline, fake renderer and `httpx.MockTransport`):
+  * health; download headers; batch
+  * no or weak token; 401; rotation
+  * 415 and 413; 13 invalid payloads, none of them echoed
+  * busy 503; render failure 500
+  * log privacy; HTML escaping and no external resources; QR policy
+  * label parity and honest wording; "not published" fallbacks; `inr()`
+  * client: success, retry, typed errors, configuration, warm-up
+  * `guide_from_cards`
+  * route: off, builds on the server, error mapping
+* tests/test_pdf_render_real.py (7, skipped without WeasyPrint): real render en/hi/mr. Checks: every font embedded, Devanagari text extractable, a page per scheme, no name in the metadata, batch, fetcher refuses https/metadata-IP/file URLs. **7/7 passed inside the image.**
+* Full suite: **649 passed, 14 skipped.**
+
+**Measured (local Docker, this laptop):**
+* One guide (3 schemes, mr): 0.7 s and 52 KB. Batch of 3 guides (13 schemes): 2.0 s and 127 KB.
+* `pdffonts`: Noto Sans and Noto Sans Devanagari (regular and bold) are embedded, subset and Unicode-mapped.
+* The image runs as uid 10001; its healthcheck passes on Render's `PORT`.
+
+**Live on Render (user deployed, 2026-11-11):**
+* `https://yojana-pdf.onrender.com/health` returns 200 with `auth_configured: true`.
+* A wrong token gets 401, and the real token returns the full 6-page Hindi guide.
+
+**Review of the live PDF and fixes:**
+* Removed the "about ₹X a year" line and the `benefit_annual_inr` field. The catalog amount mixes one-time grants with yearly payments, so PMAY printed "₹1,30,000 per year", which is wording we invented. Sending the field is now a 422.
+* `guide_from_cards` drops repeated or empty condition lines (NFBS showed the same sentence 3×).
+* Percent-encoded links are printed readable (`…/scheme/आशा/`); the href and the QR code keep the exact URL.
+* Results after the fixes: 37/37 offline, 7/7 real render in the image, full suite 649 passed, 14 skipped. The fixes reach Render only after the user commits and pushes.
+
+**Known limits:**
+* Copy-paste text of the Devanagari parts can come out garbled in some PDF readers: the extractable text layer for some shaped clusters is imperfect. The printed and on-screen text is correct.
+* Some catalog condition texts are cut mid-word (NFBS "…lump sum financia"; rule reasons are stored at ≤200 characters).
+* `how_to_apply` exists for about 230 of 267 schemes and documents for 107, so many guides say "check the official page".
+* Rule reasons and benefit text are English in every language, as published.
+* Engine shortlists for some personas include weak fits (for example PMGSY for a widow profile); this is an engine/catalog issue, not a PDF one.
+* Free Render instances sleep (first request can take up to about a minute; the client timeout is 60 s and `warm_up()` exists).
+* No frontend button yet.
+* Pre-existing behaviour, not changed here: opening `data/schemes.db` (`store/sqlite.connect`) applies the schema and WAL mode, which changes the committed file even on a read. `make_pdf_examples.py` therefore reads a temporary copy. Check `git status data/` before committing after any local script run.
+
+---
+
+## Local offline speech-to-text (yojana-stt) replaces Sarvam STT: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `fix/neon-worker-voice`. Not committed, pushed or deployed.
+
+**Why:** production logs showed `SARVAM_STT_FAILED status=402 detail=speech_credits_exhausted`. The WAHA media path was working.
+
+**What:**
+* **New `stt_service/` microservice** (separate image `Dockerfile.stt`, `requirements-stt.txt`): faster-whisper `small`, CPU int8, beam 1, temperature 0, VAD.
+  * Endpoints: `POST /transcribe` (WAV bytes, ≤15 s, mono 16 kHz PCM16, body bound about 484 KB), `GET /health`, `GET /ready`.
+  * Load and safety: one model loaded once at startup; `STT_CONCURRENCY=1` with a bounded queue wait (503 busy); optional bearer token; no disk writes.
+  * Logs: timings, duration and language only.
+  * Weights: pinned revisions are baked in at build time (`download_model.py`), and the container runs offline.
+* **Engines:**
+  * `choose_language`: limited to en/hi/mr; the chat language breaks hi/mr confusion; Urdu maps to hi.
+  * `IndicConformerEngine`: adapter only, not enabled. Its weights are gated, it needs custom code and torch, and it has no English, so English goes to Whisper.
+* **`web/speech.py`:**
+  * `STT_PROVIDER` = local | sarvam | off. Unset keeps the legacy behaviour (Sarvam only if `SARVAM_STT_ENABLED=true`); unknown values mean off.
+  * `_local_stt()` posts the WAV bytes with timeout `LOCAL_STT_TIMEOUT_SECONDS` and no redirects or proxy env. It **never falls back to Sarvam**.
+  * New `no_speech` result.
+  * TTS is unchanged.
+* **`web/waha_media.py` / `web/waha_bridge.py`:**
+  * The chat's stored language is passed as a hint to the local engine only (Sarvam keeps auto-detection).
+  * New codes `LOCAL_STT_FAILED`, `VOICE_NO_SPEECH`, `STT_DISABLED`; `VOICE_TRANSCRIPT_READY source=local`.
+  * `voice_missing` is provider-aware.
+  * **In-flight guard:** a WAHA retry during the 8–15 s transcription gets 503 instead of a second transcription.
+* **`web/runtime.py`:** production rejects an unknown `STT_PROVIDER`, or `local` without a valid `LOCAL_STT_URL`.
+* **`web/voice.py`:** capabilities report `stt_provider`.
+* **Config and docs:** `.env.example`, docs/LOCAL_STT.md (new; deployment, rollback, benchmark), WHATSAPP_VOICE_DEBUG.md, EASYPANEL_NEON_DEPLOYMENT.md, CLAUDE.md commands, `.gitattributes` (`*.wav binary`).
+
+**Tests:**
+* tests/test_stt_service.py (25): HTTP contract with real FLEURS audio and a fake engine; invalid, silent and too-long audio; model unavailable; concurrency; token; log privacy; language choice.
+* tests/test_local_stt.py (23): request shape, timeout, failures without Sarvam, provider selection, production validation, readiness, WhatsApp en/hi/mr/mixed end to end, hint, silence, service down, in-flight retry.
+* tests/test_stt_real_audio.py (6, opt-in): real model; en/hi/mr CER bounds; Devanagari output; silence; **a real signed WhatsApp voice note transcribed by the real model and answered**.
+* Fixtures: 4 FLEURS clips (CC-BY-4.0, ATTRIBUTION.md).
+* Results: full suite 611 passed, 14 skipped. Real-model tests 6/6 passed in the STT venv.
+
+**Measured (this machine, 8 CPUs; not the server):**
+
+| | en CER | hi CER | mr CER | Time per note | Memory |
+|---|---|---|---|---|---|
+| small, 2 threads | 0.06 | 0.29 | 0.55 | 7–10 s | service 418 MB idle / 558 MB peak |
+| small, 4 threads | | | | 6.4–7.4 s | |
+| base | | 0.95 (Urdu or Latin script) | | | |
+
+So base is not usable, and **Marathi accuracy with Whisper small is poor**. Three concurrent notes finished at 9, 18 and 27.5 s.
+
+**Not done:**
+* No Docker build (no Docker here).
+* No EasyPanel deploy and no live WhatsApp note.
+* IndicConformer not benchmarked: it is gated and needs the owner's HF account.
+
+---
+
+## P0: WAHA_MEDIA_UNTRUSTED on production voice notes: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `fix/neon-worker-voice` on top of `539fdb7`. Not committed, pushed or deployed.
+
+**Symptom (EasyPanel logs):** `WAHA_WEBHOOK_RECEIVED source=voice` → `WAHA_MEDIA_UNTRUSTED detail="media.url origin or path not allowed"` → reply `transcription_failed`.
+
+**Analysis (WAHA 2026.10.1 source):** WAHA sets `media.url` to `<WAHA config.baseUrl>/api/files/<session>/<message.id>.<ext>`. `baseUrl` is WAHA's **own** `WAHA_BASE_URL`, or `http://localhost:3000` when that is unset (trailing slash stripped). No query and no encoding. The path shape already passed. The old validator compared `scheme://netloc` exactly against the backend's `WAHA_BASE_URL` and `WAHA_MEDIA_ORIGINS`, so WAHA's default `localhost:3000` origin and its public domain were both rejected. Explicit default ports and path prefixes were rejected too. The old error did not say which check failed.
+
+**Changes:** web/waha_media.py: validation split into named checks (scheme, userinfo, query, fragment, origin, path_prefix, encoded_separator, traversal, session, path_depth, filename). Origins are compared as (scheme, host, port) with default ports filled in. `WAHA_MEDIA_ORIGINS` entries may carry a path prefix. WAHA's built-in default origin `http://localhost|127.0.0.1:3000` (or the base port) is trusted. The download still always goes to the backend's `WAHA_BASE_URL` with only the validated `/api/files/...` path, with no redirects, 8 s and 2 MB. Filenames may also contain `:+=`. web/diagnostics.py and web/waha_bridge.py: `WAHA_MEDIA_UNTRUSTED` now logs `check`, `scheme`, `origin_kind` (base/media_origins/waha_default/localhost/private/public), `host_match` and `port_match`. It never logs the URL, host or file name. docs/WHATSAPP_VOICE_DEBUG.md updated.
+
+**Tests:** 40 new or changed in tests/test_voice_pipeline.py (real NOWEB and @lid URLs under 7 base/advertised combinations; 18 malicious URLs, each rejected by its named check; the diagnostic line is free of URL, host, file name and phone number). Targeted: 129 passed, 4 skipped. Full suite: 563 passed, 13 skipped (after SSRF review hardening: only %40 encoding allowed, malformed ports rejected, localhost-advertised URL proven to fetch from WAHA_BASE_URL, redirects not followed).
+
+**CI fix:** `test_smoke_import_list_imports` failed on GitHub Actions (`No module named 'redis'`). CI installs only requirements.lock.txt, while redis is in requirements-deploy.txt (image only). The test now imports project packages and installed modules, and for missing third-party modules it checks that they are pinned in a requirements file the Dockerfile installs. Verified with redis blocked.
+
+**Not verified live:** which check production hit. If the redeployed log shows `check=origin origin_kind=public`, set `WAHA_MEDIA_ORIGINS` to WAHA's public origin (see the voice debug doc).
+
+---
+
+## Production readiness audit + WhatsApp voice-note fix: 2026-11-11
+
+**Who:** Claude (Opus 5.5), branch `fix/neon-worker-voice` from `refactor` @ `9f77874`. Not committed, pushed or deployed.
+
+**Root cause, voice notes get no reply:** (1) WAHA NOWEB 2026.10.1 sends `body: null` for voice notes and `persistent_event` returned `ignored` (HTTP 200, no reply, no retry). (2) WAHA's media URL is `/api/files/<session>/<id>.oga`, which the media allowlist rejected. Both were verified against WAHA 2026.10.1 source, and both are fixed. A test fails on the old code.
+
+**Changes:** web/waha_bridge.py (null body for media; reason-specific en/hi/mr failure replies; a transcript is reused across WAHA retries so Sarvam is paid once; voice readiness check), web/waha_media.py (session-nested paths, optional WAHA_MEDIA_ORIGINS while still fetching only from WAHA_BASE_URL, inline base64, VoiceFailure codes), web/diagnostics.py (new, privacy-safe JSON codes), Dockerfile (+agents, +worker, build smoke test, dual-role health check), deploy/healthcheck.py and deploy/smoke_imports.py (new), worker (SIGTERM graceful stop, heartbeat, refuses SQLite in production), saathi/senders.py (WORKER_OUTBOUND_ENABLED gate), store/sql/002_agents.sql (refuses to drop non-empty tables), `python -m store pg-status` (read-only), discovery/catalog.cached_catalog (Postgres catalog kept 60 s in memory for conversation and /readyz), production check on SCHEME_DATABASE_URL, orchestrator docstring corrected (web/WhatsApp do not use it yet). Docs: PRODUCTION_READINESS_AUDIT.md, EASYPANEL_NEON_DEPLOYMENT.md, WHATSAPP_VOICE_DEBUG.md.
+
+**Tests:** `python -m pytest -q` = **521 passed, 13 skipped** (baseline 479/13), three runs. One earlier run timed out once while its output was piped through `tail`; not reproduced. New: tests/test_voice_pipeline.py (31), tests/test_deploy_worker.py (11).
+
+**Not verified (no access/tools here):** docker build, real ffmpeg, Postgres/Neon, Valkey, WAHA, Sarvam, EasyPanel, Vercel build. See the audit's final status table.
+
+---
+
+## NOWEB personal LID sender hotfix: 2026-10-31
+
+**Who:** Codex, under repository-owner instructions.
+
+**Root cause / change:** The signed persistent webhook rejected personal `@lid` senders because its allowlist matched only phone-number `@c.us` addresses. Accept bounded ASCII numeric personal LIDs as well as existing phone JIDs. Preserve the full incoming chat ID and suffix for case hashing, reply requests and encrypted summary routes; never guess a phone number from an opaque LID. Groups, status/broadcast/newsletter IDs, malformed/device-qualified IDs, bot echoes and group-context flags remain rejected. No schema, credential, existing database/session, frontend or eligibility changes.
+
+**Regression evidence:** Signed inbound `yojana` activation exercises the real `_send` adapter with stubbed HTTP and asserts exact `/api/sendText` recipient/session/menu. Covers repeated events, pending reply retry, distinct LIDs, the same digits under different suffixes, conflicting event ownership, scoped STOP, HMAC rejection, voice-note same-case deduplication, browser one-time links, cross-user case authorization and consent-based summary routing. Final full suite: **390 passed, 0 failed, 1 skipped** in 113.19 seconds, including 30 LID regressions. Real PostgreSQL remains skipped without `TEST_POSTGRES_URL`. Python compilation and diff checks passed.
+
+**Engine contract:** Owner confirms deployed NOWEB CORE 2026.10.1 receives personal LIDs. Checked the matching upstream [POST /api/sendText controller](https://github.com/devlikeapro/waha/blob/2026.10.1/src/api/chatting.controller.ts#L73-L82), [NOWEB sendText method](https://github.com/devlikeapro/waha/blob/2026.10.1/src/core/engines/noweb/session.noweb.core.ts#L1080-L1100), and [LID-preserving JID conversion](https://github.com/devlikeapro/waha/blob/2026.10.1/src/core/utils/jids.ts#L56-L68); official [send-message documentation](https://waha.devlike.pro/docs/how-to/send-messages/#chatid) lists LID chat targets. This establishes source-contract support, not acceptance or delivery on the deployed instance.
+
+**Live acceptance remains UNVERIFIED:** No live `WAHA_BASE_URL` / `WAHA_API_KEY` is configured in this environment. After deploying the reviewed fix to the existing service, send `yojana` from a controlled personal LID account, confirm its exact `chatId` is submitted to `/api/sendText`, inspect the actual response and confirm menu receipt on that same handset. Repeat the event without another reply, try another controlled sender, and verify STOP/voice notes. A successful send API response alone is not delivery evidence. No live message was sent, no session was re-paired, and nothing was pushed or deployed by this change.
+
+---
+
+## AgentX WhatsApp final: 2026-10-30
+
+**Who:** Codex, under repository-owner instructions.
+
+**Changed:** Preserved release `95b99fccaf6cee2e14471da7b9d0b289605075ae` on the existing feature branch. Unified development and signed persistent WhatsApp activation policy: exact normalized YOJANA/yojna/योजना only, localized plain-text Chat/Call list, numeric facts never menu commands, direct citizen messages only. Added trusted-origin authenticated bounded voice-note retrieval, in-memory ffmpeg OGG/Opus conversion and existing Sarvam STT integration. Media I/O releases the case transaction so STOP can revoke; version recheck prevents late audio restoring the case. Durable outbox dedup prevents repeated turns on retry. Added channel-language migration 004 and same-case language continuity into browser Call. Existing eligibility, browser interruption, privacy/security and case-storage code retained unchanged.
+
+**Documentation:** Replaced obsolete README with judge-facing features, workflow/architecture Mermaid diagrams, real local interface screenshots, setup/security details and honest evidence table. Added `docs/WHATSAPP_FINAL.md` with exact variables, engine-schema limitations, acceptance checklist and 90-second script. Public URLs, demo video and redacted live WhatsApp screenshot were not supplied; none fabricated.
+
+**Validation:** 360 passed, 0 failed, 1 real-PostgreSQL test skipped. Local real OGG/Opus decode and malformed/oversized/overlong rejection passed. Provider responses and WhatsApp sends mocked. Full frontend build, 19-asset synchronization, JavaScript syntax and pip checks passed. Real local HTTP/readiness/SSE, desktop/tablet/mobile and EN/HI/MR typed browser flows passed; microphone/audio events simulated. Interruption, stale STT/TTS, completion, restored dashboard and consent revocation browser checks passed. Release-file scan found only reviewed fake test/CI credentials. No databases, QR images, private links or secrets included.
+
+**Limitations:** No deployed origins, pinned running WAHA image/engine or live credentials available. Actual WAHA schema/QR session, Groq/Sarvam account calls, real PostgreSQL, container build and physical phone/recipient delivery remain UNVERIFIED. System TEMP drive was full; tests use ignored D-drive temp. An attempted removal of two disposable C-drive pytest caches was denied by Windows permissions; no project or recovery files removed. No push/deploy/main change.
+
+**Next:** Review the local release commit, privately configure the existing EasyPanel services, inspect the actual WAHA engine/schema and execute the external acceptance checklist. Keep backend/frontend on the same exact reviewed commit.
+
+---
+
+## AgentX candidate: 2026-10-30: reliable tap interruption and verified local demo
+**Who:** Codex with repository-owner instructions
+**Goal:** Finish the smallest reliable demo while preserving all uncommitted V2.5 hotfix work.
+
+**Changed**
+- Preserved source-audited cohort, eligibility, completion, relevance, citizen-isolation and snapshot safety changes. Recovery binary patches plus untracked source copies were saved outside the repository before implementation.
+- Added explicit Interrupt / Speak Now: synchronous cancellation of server audio/device synthesis, pending TTS abort, generation invalidation and immediate gesture-based listening. Capture epochs, duplicate-final guards and aborted STT prevent stale/duplicate turns. This is tap interruption, not acoustic hands-free barge-in.
+- Added visible Completed state, in-flight WhatsApp summary consent revocation and literal 1 Chat / 2 Call menu support. Recipient-bound queues and API-acceptance-only delivery wording are retained.
+- Added English/Hindi/Marathi synthetic multi-turn fixtures, relevant localized questions and brief fixed concluding speech. All 23 language entries remain; live coverage is unverified.
+- Synchronized all 19 public frontend assets, bumped frontend metadata to 2.5.1, added focused backend/browser regressions and AgentX acceptance/setup/judge documentation. No new database migration or paid service was introduced.
+
+**Tests:** 312 passed, 1 real-PostgreSQL test skipped, 0 failed; pip check, JavaScript checks, frontend build/sync and diff checks passed. Existing cohort/speech/citizen suites and the new interruption/consent suite passed. Actual local HTTP/readiness/SSE and automatic finalization/dashboard reload passed against mock extraction and an isolated SQLite adapter. All three migrations ran twice on that adapter. Five viewport sizes and English/Hindi/Marathi fixtures passed.
+
+**Decisions / limitations**
+- An initial follow-up test run encountered a full Windows system-temp drive; using an ignored project-drive temp directory resolved it. The successful full run uses that location.
+- No real provider/database credentials, deployment URLs, Docker/PostgreSQL service or WAHA QR session were available. Real PostgreSQL, Groq/Sarvam, physical mobile audio, deployed proxies and actual recipient receipt remain UNVERIFIED. Mocked tests never establish live success.
+- Create one local feature-branch release commit after verification. Do not push, deploy, modify main, force-push, reset or merge unrelated branches. Intended backend/frontend source is the same release SHA on feature/v2.5-citizen-experience; live control-panel branch settings cannot be confirmed here.
+
+**Next:** Owner review of docs/AGENTX_DEMO.md, private EasyPanel configuration/QR pairing, real PostgreSQL and provider/mobile smoke checks, then explicit publication/deployment approval.
+
+## v2.8: 2026-11-11: refactor + scheme database + agent orchestration in one branch (refactor2.0)
+**Who:** Claude (claude-opus-5-5) with Kshitij
+**Goal:** combine the refactor demo (12 commits: v2.4 deployment, v2.5 citizen experience, voice, WhatsApp, Redis cache, scheme alerts) with feature/database-setup and feature/system_orchestration in branch refactor2.0, and verify the whole project. No commit or push (left to the owner).
+
+**Version labels:** the v2.4 and v2.5 entries dated 2026-11-11 (PostgreSQL store, agent orchestration) were written on the feature branches in parallel with refactor's v2.4/v2.5 (2026-10-29/30). They are different work; entries are kept unchanged and ordered by date.
+
+**How the merge was resolved** (merge of feature/system_orchestration, which already contains feature/database-setup; Git merged 60+ files automatically, 6 conflicted)
+- `web/conversation_api.py`, `web/waha_bridge.py`: **refactor version kept** (cases, access tokens, request-id replay, dependents, identity-correction guard, assessment, voice, LID WhatsApp). The orchestration replacement of these files was dropped. Additive hooks in conversation_api: `get_llm()` returns the Reader agent's shared client (READER_* falls back to EXTRACTOR_*; same seam the tests patch); `_short_answer()` reads short replies to single-field questions in code (no model call); `_queue_gap_search()` queues one gapfill job per profile group per day when fewer than 5 good matches; response gains `searching_more`.
+- `tests/test_conversation_v21.py`, `tests/test_dashboard.py`: refactor versions (the orchestration branch had rewritten them for the replaced API).
+- `llm/providers/openai_provider.py`: per-role timeout from llm/config; `LLM_TIMEOUT_SECONDS` (refactor) when a client has none; no SDK retry for fast roles.
+- `.env.example`, `README.md`, `PROGRESS.md`: both kept. README: refactor README plus a "Scheme database and agent orchestration" section and project-map entries.
+
+**Hidden clash fixed: two meanings of DATABASE_URL.** refactor uses it for the citizen case store (postgresql:// or sqlite:/// for offline tests); the database branch used it for the scheme catalog. The scheme store now reads **SCHEME_DATABASE_URL** (store/db.py, pg.py, migrate.py, pg_admin.py, scripts, worker, tests, docs). Both may point at the same Postgres server; their tables do not overlap.
+
+**Other fixes during integration**
+- `requirements-deploy.txt` pinned `psycopg[binary]==3.2.13` while including the lock that pins 3.3.8 (pip conflict); now pinned once in the lock.
+- `tests/conftest.py`: empties SCHEME_DATABASE_URL and DATABASE_URL at import, and removes real keys and endpoints from .env per test (OPENAI_API_KEY, OPENAI_BASE_URL, GEMINI_API_KEY, ...; JUDGE_FALLBACKS, SCOUT_MODEL, VERIFIER_MODEL). Two refactor tests failed only because a real OPENAI_BASE_URL leaked in from .env.
+- `tests/test_integration_hooks.py` (new, 5): shared Reader client, short answers by code (including inside a real conversation), gap search queued once per group and never breaking a reply.
+
+**Verified**
+- Offline: 480 passed, 12 skipped, 0 failed; network-blocked run: no attempts.
+- PostgreSQL on Neon `yojana_test`: 30/30, including refactor's real-PostgreSQL case-store test, previously never run (README: "skipped without TEST_POSTGRES_URL").
+- Engine eval unchanged: 36/36, 12/12, name matcher 1.00/1.00.
+- Live server (port 8001): `/`, `/app`, `/chat` (307), `/voice`, `/legacy`, `/docs`, `/api/health/live|ready`, `/healthz`, `/readyz`, `/api/catalog`, WAHA status (persistent: true) all respond.
+- Live conversation through the merged API (Groq): Marathi widow in Beed, 1 model call for the first message (all 8 facts right), "हो" and "नाही" read by code (0 calls), assessment complete with 5 options.
+- Live gap lane: Karnataka woman farmer -> `searching_more: true` -> worker: Scout (Groq, 8.3 s), 2 searches, 4 official pages queued; 3 disallow bots (respected), 1 dropped the connection; no new scheme.
+- Terminal chat (`python -m saathi`) on the merged code: 1 Reader call, other answers by code.
+
+**Known issues / not done**
+- The gap lane's follow-up (`notify`) reaches orchestrator conversations (terminal); /app and WhatsApp conversations live in the refactor case store. Connect `notify` to refactor's scheme-alert outbox (`web/notifications.py`, `scheme_alert_outbox`) next.
+- Two scheme caches now exist (refactor Redis/Valkey `web/public_cache.py`, orchestrator 60 s in-process cache); unify on Redis when REDIS_URL is set.
+- refactor `QUESTION_TEXT` has no Marathi/Hindi text for `residence`; the question showed in English in a Marathi conversation.
+- Port 8000 on this machine is held by an old server from the start of the session (PID 11268, pre-merge code).
+
+**Next:** owner review of refactor2.0; `git add -A`, commit and push by the owner; then notify -> scheme-alert outbox.
+
+---
+
+## v2.5: 2026-11-11: agent orchestration
+**Who:** Claude (claude-opus-5-5) with Kshitij
+**Goal:** the team's last task before deployment: a smooth flow with few failures, each agent doing one job well, clear hand-offs, the right number of agents, cheap database updates.
+
+**Before:** 8 model jobs on 4 roles, wired three ways (`web/conversation_api.py`, `web/session.py` + `saathi/investigator.py`, `saathi/chat.py`). No timeouts (Gemini took 78.5 s on one message). A new LLM client per WhatsApp message, so fallback cooldowns were forgotten. One role ("extractor") for both fast message reading and slow page reading. Exceptions ended turns. The WhatsApp reply never contained schemes. No web fallback or budgets in the user path.
+
+**Changed**
+- `agents/` (new): five agents, each one job + JSON contract + code check: Reader, Replier, Scout (replaces brainstorm + investigator analyse), Extractor, Verifier (the unused judge role). `agents/runner.run_agent` is the only place agents run and never raises: cache (hash key), lane budget, shared client, validate, deterministic degrade, token record.
+- `llm/config.py`: roles `reader`, `scout`, `verifier`, each falling back to extractor/planner/judge settings; per-role timeouts (`ROLE_TIMEOUTS`, `<ROLE>_TIMEOUT`); `FAST_ROLES` (reader, agent); `shared_llm(role)` one client per role per process.
+- `llm/providers/*`: timeouts on every provider; fast roles: Gemini thinking LOW and no SDK retry (a 429 made the SDK sleep 23 s); local models +15 s to load.
+- `llm/fallback.py`: third failure class "slow" (timeout, 504, deadline): move on at once, rest the provider 5 min. A 504 used to stop the chain. Fast roles do not wait on busy providers (`busy_tries=1`).
+- `saathi/orchestrator.py` (new): one state machine for every entry point; `short_answer.py` (yes/no/number/choice in en/hi/mr read by code; "no" -> 0 for count questions); `reply.py` (questions, top-5, details, follow-ups as code templates, translated options); `sufficiency.py` (good match = status + quality >= 30 + match >= 2; segment key); `guard.py`; `senders.py`. Loop guard: a question unanswered twice is skipped; absurd questions filtered (student at 30+, pregnancy outside 15-45 or for men).
+- `web/conversation_api.py`: thin adapter; conversations persist in the database (7 days). `web/waha_bridge.py`: calls the orchestrator with a stable hashed conversation id; **the reply now includes the schemes**; chat id kept for follow-ups.
+- `worker/` (new): `python -m worker [--once|--batch N|--status|--retry-failed]`; jobs gapfill -> extract -> notify; leases, retries (1/2/4 min), failed state kept.
+- `store/runtime.py` + `store/sql/002_agents.sql`: job queue (SKIP LOCKED), conversations, agent cache, daily budget, segment searches, coverage log; same API on SQLite; reconnect on dropped Postgres connections (Neon closes idle ones).
+- `ingest/extract.py`: `benefit_recipient` in the extraction schema (village/institution programmes not saved); field-quote check (`QUOTE_WORDS`, `rule_needs_review`, `flagged_rules`, `drop_unsupported`); Devanagari names transliterated for ids.
+- `discovery/discover.py`: Extractor and Verifier run through the runner; reports flagged/dropped/not-for-people.
+- `core/fields.py` + `schemes/geo/districts.yaml`: districts resolved by key, alias, Devanagari transliteration or sound ("bhid" -> beed, "अहिल्यानगर" -> ahmednagar).
+- `saathi/__main__.py`: `python -m saathi [--worker] [--debug]` runs on the orchestrator; `--classic` keeps the old loop.
+- `agents/eval.py` + `tests/fixtures/agent_eval/`: `python -m agents.eval --live [--pace S]`, Reader (12 messages) and Verifier (8 rules) gold sets.
+- Tests: `tests/test_orchestration.py` (54); `tests/conftest.py` defaults every role to the mock provider and no search, so no test can reach a real model (a leak to Gemini was caught by the network-blocked run and closed); two conversation tests now inject a mock Reader instead of patching removed internals.
+- Docs: `docs/AGENT_ORCHESTRATION.md` (new), README section, CLAUDE.md layout and commands, `.env.example` agent settings.
+
+**Measured**
+- Live, Karnataka worker: 1 Reader call (2,588 tokens, 3.3 s on Groq) for 7 turns; 6 answers by code; gap-fill ran (Scout + 2 searches, 9 s).
+- Offline on the real catalog, Beed SC widow: 1 Reader call for the whole conversation; top result Indira Gandhi National Widow Pension; atrocity-victim scheme gone.
+- Reader eval paced: 52/53 (98%), language 12/12. Unpaced burst: Groq 429 after 4 calls exposed the SDK sleep, missing 504 handling and a too-short local timeout; all fixed.
+- Verifier eval: 5/5 caught, 0/3 wrongly dropped (after adding implied-applicant examples to the prompt; before: 2/3 wrongly dropped).
+- Batch lane: ZP Jalgaon village-fund page rejected as not for a person (qwen saved such pages earlier).
+- **Web search finding:** Google via SerpAPI ignores `site:gov.in OR site:nic.in`, a single `site:gov.in` and `as_sitesearch` (0-2 official results in 10; 3 test searches). Gap-fill now asks for 30 results per paid search and keeps only official ones.
+
+**Tests:** 314 passed, 9 skipped (opt-in Postgres; 9/9 pass on Neon), 0 failed; network-blocked run: no attempts.
+**Eval:** as above.
+
+**Known issues / not done**
+- `/legacy` (`web/session.py` + investigator) still runs its own flow; not yet on the orchestrator.
+- Ranking reasons ("you meet 3 of its conditions") are English only.
+- Fisheries/poultry schemes still reach some top 5s: their stored rules genuinely match; needs re-extraction with the Verifier.
+- Live web search yields few official pages (above). Per-state source maps remain the better source.
+- 3 village-fund records saved by the earlier qwen run remain in Neon; 1 batch job failed from before the fixes (`--retry-failed`).
+
+**Next:** move /legacy onto the orchestrator; drain the queue with `python -m worker --batch`; re-extract low-quality schemes through the Verifier.
+
+---
+
+## v2.4: 2026-11-11: PostgreSQL store with derived "who is it for" tables
+**Who:** Claude (claude-opus-5-5) with Kshitij
+**Goal:** Phase 0 of the all-India database plan: a PostgreSQL store with the same functions as the SQLite one, structured tables derived from each scheme, a quality score, and a one-to-one import of the existing catalog. Team decisions: all of India, WhatsApp (WAHA), 5 schemes per user, free LLM services or a local GPU.
+
+**Changed**
+- `store/sqlite.py` (new): the SQLite store, moved unchanged from `store/db.py`.
+- `store/db.py`: now a switch. Every function delegates to SQLite, or to PostgreSQL when `DATABASE_URL` is set; chosen per call, so callers (`from store import db`) are unchanged. Loads `.env` itself so `python -m store` sees `DATABASE_URL`.
+- `store/pg.py` (new): PostgreSQL store, same functions and return values as SQLite (`load_catalog`, `save_scheme`, `find_duplicate`, `queue_urls`, `mark_url`, ...). Saving writes the scheme dict (`scheme.data`, JSONB) and all derived rows in one transaction. Unknown districts in scraped schemes are registered (`auto_added`) instead of rejected. Dates are encoded like SQLite (`default=str`).
+- `store/sql/001_init.sql` (new): schema. Geography (`geo_state`, `geo_district`); `scheme` + `scheme_rule`, `scheme_target`, `scheme_name`, `scheme_unmapped`, `scheme_document`, `scheme_source`; `source_site`, `crawl_url` (with priority and insertion order); orchestration tables for Phase 3 (`coverage_event`, `segment_search`, `job`, `conversation`, `review_task`); `pg_trgm` indexes on names.
+- `store/derive.py` (new, pure): scheme dict -> rule, target, name, unmapped, document and source rows. Targets come from the rules that let people in (gender=female, occupation=farmer, social_category=sc, age_band, income_limit); exclusions and state/district scope are skipped, as in `core/ranking.py`. Topic categories come from a fixed keyword list.
+- `core/quality.py` (new, pure): 0-100 record quality (qualifying rules, checkable share, benefit amount, documents, how to apply, verified, freshness).
+- `store/pg_admin.py` (new) + `store/migrate.py`: `python -m store pg-init` (apply SQL files once each, seed 36 states/UTs and the Maharashtra districts), `pg-import` (copy schemes and crawl records from SQLite one to one), `quality` (report).
+- `scripts/check_pg_parity.py` (new): compares the full catalog on both backends (every scheme dict, scoped loads, stats, engine statuses/scores/start-with for the 12 personas and 4 sample profiles).
+- `tests/test_derive_quality.py` (new, 18 tests). `tests/test_pg_store.py` (new, 9 tests, opt-in via `TEST_DATABASE_URL`, database name must end in `_test`).
+- `tests/conftest.py`: sets `DATABASE_URL=""` so no test can write to a real Postgres when `.env` has one.
+- `requirements.txt`, `requirements.lock.txt`: `psycopg[binary]` 3.3.8 (+ `tzdata` on Windows).
+
+**Decisions**
+- PostgreSQL over MongoDB: the data is relational (geography, rules, targets, sources, dedupe merges, coverage analytics); JSONB keeps the flexible scheme document the engine reads, so `core/` is unchanged.
+- The structured tables are derived in code from the dict, never edited separately, so they cannot drift.
+- The "who is it for" index is derived from quote-checked rules, not tagged by an LLM (the LLM must not decide eligibility).
+- SQLite stays the default; tests keep using it. Postgres is opt-in until parity is proven on the real catalog.
+
+**Measured on the current catalog (derive over all 267 schemes)**
+- Levels: 67 central, 180 state, 20 district. Quality median 48/100; 54 schemes score under 30.
+- Most common targets: social_category=sc 46, residence=rural 38, is_student 37, st 31, is_bpl 29; gender=female only 13.
+- 63 schemes yield no target (no qualifying rule) and 56 no topic category.
+
+**Tests:** 255 passed, 9 skipped (Postgres, opt-in), 0 failed (`python -m pytest -q`)
+**Eval:** unchanged
+
+**Known issues / not done**
+- Not yet run against a live Postgres: waiting for `DATABASE_URL` in `.env` (the password stays with the user).
+- Local extraction benchmark (`qwen2.5:7b-instruct`, `nemotron-3-nano` on an RTX 5060 8 GB) waits for `OLLAMA_CONTEXT_LENGTH=8192` and an Ollama restart. Earlier note (v0.8, other machine): qwen2.5:7b took 112-525 s per page with schema errors.
+- Dedupe still compares only within the same state and district, and token_set_ratio over-matches subsets ("pension scheme" vs "widow pension scheme"); fix planned for Phase 2.
+- Full LGD district list (about 780, official codes) not imported yet.
+
+**Next:** `python -m store pg-init`, `python -m store pg-import`, `python scripts/check_pg_parity.py`; then the opt-in Postgres tests; then the local model benchmark.
+
+**Update, same day: live on Neon, local model, end-to-end test**
+- Live database: Neon PostgreSQL (Singapore). `pg-init` applied; `pg-import` copied 267 schemes + 1,008 crawl records in 6 m 55 s (about a dozen round trips per scheme). `scripts/check_pg_parity.py`: PARITY OK on every check (all scheme dicts, 7 scopes, stats, engine results for 12 personas + 4 sample profiles).
+- Fixed: index `scheme_source` clashed with the table of the same name (`store/sql/001_init.sql`, renamed `scheme_by_url`).
+- Fixed: `Discoverer` crashed at start-up without `SEARCH_PROVIDER`, which blocked `--extract-queued` (no search needed). `discovery/search.py` `NoSearch` stand-in; searches now fail with a clear SearchError instead.
+- Local model: Ollama ran with a 4,096-token context despite `OLLAMA_CONTEXT_LENGTH`, cutting the ~5.7k-token extraction prompt. Created `qwen2.5-7b-8k` and `nemotron-3-nano-8k` (Modelfile `PARAMETER num_ctx 8192`). qwen2.5 7B on RTX 5060: 4k context 58 s/page, 4/5 valid; **8k context 13 s/page, 5/5 valid, 5/5 names right**. Nemotron benchmark stopped (not measured).
+- **Rule accuracy is the weak point:** on the Kerala old-age pension page qwen kept the 2 right rules plus 3 wrong ones (`is_bpl=true` from an "other pension" exclusion, `residence=rural` from "residing within Kerala", `family_size>=1` from "must be destitute"). They pass the quote check because the sentence exists. `scripts/bench_extract.py` (new) now scores rule agreement with the reference and lists extra rules.
+- `scripts/try_flow.py` (new): one message through every step (privacy guard, LLM read, validation, database scope, engine, top 5, sufficiency, gap log in `coverage_event`, optional `--update N` from the queue).
+  - Karnataka construction worker (English): 8 facts right; 68 schemes in scope; 1 good match; gap logged. `--update 3` read 3 queued pages: Neon 267 -> 270, queue 526 -> 523.
+  - Maharashtra SC widow (Marathi): language mr; 243 schemes in scope; 5/5 "good".
+- **Problems found by the live test (fix before scaling extraction):**
+  1. District "बीड" became `bhid`, not `beed`, so Beed's district schemes were not loaded. Districts need matching against the geography table and its aliases.
+  2. qwen read "शेतमजूर" (farm labourer) as `occupation=farmer` and added `owns_cultivable_land=true`.
+  3. Top 5 contained wrong fits: an atrocity-victim scheme (only the SC rule could be checked) and a Rs 25 lakh fodder-business project counted as Rs 8.3 lakh a year. The "good match" test (status + quality >= 30) is too loose; it also needs match strength and no unchecked condition that is clearly about someone else.
+  4. The 3 pages read by `--update` were village-panchayat fund programmes, not citizen schemes (quality 5, 35, 5; one with a wrong `occupation=farmer` rule). Extraction needs a "benefits a person" check before saving.
+  5. Scheme ids from Devanagari names become digits or hashes (`5__maharashtra`); slugs need transliteration.
+  6. The bot would ask a 34-year-old worker whether he is a student; age should suppress that question.
+  7. Each catalog load from Neon takes about 2-2.6 s; cache by `db.version()` before WhatsApp traffic.
+
+**Tests:** 255 passed, 9 skipped (Postgres, opt-in), 0 failed.
+**Next:** fixes 1-4 above (district matching, field-quote consistency check in `ingest/extract.py`, stricter "good match", personal-benefit filter), then bulk extraction of the 523 queued pages with `qwen2.5-7b-8k`.
+
+**Update: cloud keys, live web search, cost per query**
+- `.env`: the Groq key was in `GROQ_API_KEY`, which the code does not read; copied into `OPENAI_API_KEY` with `OPENAI_BASE_URL=https://api.groq.com/openai/v1`. Extractor on Gemini, fallbacks Groq then local qwen; judge on Groq (different vendor from the extractor).
+- `scripts/try_flow.py --web N`: live gap-fill through `Discoverer.discover_for_profile` (SerpAPI, official sites only, saved to Neon). `scripts/query_cost.py` (new): tokens per model from `logs/llm_calls.jsonl`, cost only with prices given on the command line.
+- Latency: Gemini `gemini-3.8-flash` 78.5 s to read one message (6.2 s for a tiny call); Groq `openai/gpt-oss-120b` 2.6 s. **Message reading must be on Groq**; Gemini only for background page extraction.
+- Karnataka worker with `--web 2`: 2 SerpAPI searches, 2 KLWB pages read, both rejected as "not a single-scheme page", 0 new schemes. 4 Gemini calls, 12,792 in / 917 out tokens, 284 s.
+- Maharashtra widow on Groq: district `beed` and occupation `agricultural_labourer` right (qwen gave `bhid` and `farmer` + land). 1 call, 2,196 in / 960 out tokens. 249 schemes in scope, 5/5 "good", but the top 5 still holds wrong fits: PM Matsya Sampada (fisheries), the atrocity-victim scheme, and a PMAY-Gramin record whose source is a ZP Amravati biogas page (name and source mismatch). Engine and data fixes, not LLM.
+- Cost: free tiers, so $0 per query. One database-answered query is about 3.2k Groq tokens; a query that triggers web search is about 14k Gemini tokens and 2 SerpAPI searches (of 250 a month).
+
+**Update: review and clean-up before push**
+- `store/pg.py`: a cached connection was reused forever; Neon suspends idle databases and drops their connections, so the first call after a quiet spell would fail. Now a broken connection is replaced, every store function reconnects and retries once on `OperationalError` (all are safe to repeat), and connecting times out after 10 s.
+- `tests/test_store_switch.py` (new, 5 tests): backend switch, password-free `db_path`, retry once then raise, discovery without a search key.
+- Opt-in Postgres tests run for the first time: 9/9 pass against a separate Neon database `yojana_test` (the real data is in `neondb`).
+- Whole suite run with all outbound sockets blocked: no network calls, even with real keys in `.env`.
+- `.env.example`: `DATABASE_URL`, `TEST_DATABASE_URL`; note that Groq goes in `OPENAI_API_KEY` + `OPENAI_BASE_URL` (`GROQ_API_KEY` is not read). README: PostgreSQL section and the live-test scripts. CLAUDE.md: store layout, new commands, field count 41 (was 46).
+- `core/ranking.py` docstring: formula corrected to `1*match + 2*value_points + confidence - effort` (the code was right).
+- `demo.py`: `ask()` could not answer "choice" questions, and the first question (state) is one; options are now listed and accepted by name or number.
+## v2.5: 2026-10-30: automatic assessment and resilient voice
+**Who:** Codex
+**Goal:** Complete useful assessments without catalog exhaustion and restore authorized results reliably.
+
+**Changed**
+- Added deterministic intent/geography coverage, uncertainty and question-budget policy shared by existing conversation channels.
+- Persisted automatic voice completion atomically, added short speech and stale playback cancellation, and bounded Sarvam quota/error fallback.
+- Added authorized dashboard match/history restoration and refresh/refinement controls; synchronized standalone frontend.
+- Added completion, authorization, speech failure and browser restoration regression coverage and updated deployment runbook.
+
+**Tests:** 295 passed, 1 skipped; frontend build and JavaScript syntax checks passed. Completion browser suite, citizen responsive workflows at five widths, English/Hindi/Marathi workflows and route/SSE smoke checks passed against local mocked inference and simulated audio. Python syntax/secret review found only existing CI references and synthetic test candidates; catalog matches HEAD, index empty.
+
+**Known issues / not done**
+- Real PostgreSQL persistence test skipped without an external test server. Hosted Groq/Sarvam, physical microphone/device audio and production proxy behavior require staging verification. No commit, push or deployment performed; no new migration or required environment variable.
+
+## v2.5: 2026-10-30: critical cohort, identity and audio hotfix
+**Who:** Codex
+**Goal:** Prevent school-only matches and incomplete rule data from falsely confirming eligibility; prevent mixed citizen facts and silent speech failure.
+
+**Changed**
+- Audited actual school nutrition/Navodaya catalog rows and official district pages. Added non-mutating source-backed class/enrollment/management overlays; preserved the public catalog and source URLs.
+- Unreviewed extraction cannot produce plain eligible. Manual matches cannot count as confirmed completion. Student course/year and useful income questions, pension relevance and program deduplication are explicit.
+- Fresh start creates a separate case; continuing is explicit. Identity corrections invalidate stale life-stage facts/results. Dependents use separate bounded profiles. Old persisted snapshots and retry caches cannot restore unsafe eligibility claims.
+- Audio decode errors use direct device fallback. Added Replay, autoplay/stall/timeout/error handling, final speech after ending, stale callback guards, fresh-summary clearing, and silent/empty WAV rejection.
+- Added actual-catalog, identity, legacy-snapshot and audio regressions, expanded local browser acceptance, and documented before/after outcomes in docs/HOTFIX_V25_AUDIT.md.
+
+**Tests:** 306 passed, 1 skipped; frontend build, synchronization, JavaScript syntax and diff checks passed. Local mocked browser checks cover actual college/senior cases, explicit continuation/fresh start, responsive English/Hindi/Marathi flows, automatic finalization/restoration, SSE and simulated speech failures/replay. No real inference or paid speech was called.
+
+**Known issues / not done**
+- Real PostgreSQL, provider connectivity/credits, physical mobile audio and production proxy require staging verification. Broader human audit of extracted catalog rules remains necessary. No migration/new environment variable, commit, push or deployment.
 
 ## Entry template
 
@@ -41,6 +529,58 @@ This file is the project's history, newest entry first. Read it top to bottom to
 
 **Next:** the next concrete step
 ```
+
+---
+
+## v2.5: 2026-10-30: Citizen experience, relevant questions and browser voice
+**Who:** Codex with repository owner authorization
+**Goal:** Implement V2.5 on feature/v2.5-citizen-experience without touching production, merging, pushing or calling paid services.
+
+**Changed**
+- core/relevance.py, core/questions.py, saathi/shortlist.py and web/conversation_api.py: explicit category/life-stage/occupation priority dominates unresolved-scheme count. Retired seniors seeking financial help explore pensions/income support, not scholarships. Geography and official eligibility stay deterministic and unchanged; no student flag or benefit is inferred.
+- web/frontend.py and public citizen assets: explicit government-scheme hero, four prominent citizen actions, source/evidence/missing-requirement cards, manual language options and saved voice history. Existing layouts, API contracts and owner/session restoration remain. Standalone frontend sync/build includes /voice.
+- web/voice.py, web/speech.py and browser voice assets: explicit microphone controls, recognition/transcription/thinking/playback states, typed fallback, bounded optional server STT, server-only Sarvam TTS and retained minimized transcript/ranked summaries. Real HTTP adapters are implemented but live speech quality is unverified.
+- Migrations 002_voice.sql and 003_channel_choices.sql add one-use link hashes, browser grants, encrypted channel routes, voice history/snapshots, summary outbox and persistent Chat/Call menu state. Numeric chat answers no longer accidentally select Call.
+- Secure WAHA START -> Chat/Call, same-case HTTPS fragment handoff, explicit atomic redemption, replay/expiry/STOP denial and encrypted retry payloads. Consent-based summary worker supports pending/retrying/failed/cancelled/accepted_by_waha, manual retries and cancellation; recipient delivery remains explicitly unverified.
+- 23-language BCP-47 registry with separate text/browser STT/provider speech coverage, automatic/mixed-language extraction, manual override and English fallback. Added ten-language fixtures without claiming real model or translation validation.
+- Deployment docs/runtime templates updated; docs/V25_CITIZEN_EXPERIENCE.md contains exact local/mock and staging instructions. Added scripts/check_citizen_browser.py; the old V2.3 browser script has fixed historical hero assertions and was write-protected, so its source was preserved.
+
+**Tests:** Full suite 283 passed, 1 skipped, 0 failed; targeted V2.5 suite 26 passed. Existing baseline preserved apart from updating the migration count for the two additive migrations. Dependency, frontend sync/build, JavaScript syntax and whitespace checks pass. Five-width browser checks passed through the standalone frontend/local proxy, covering citizen actions/translations, Explorer, real Rescue, voice layout, mocked en/hi/mr typed voice/restoration/mute/summary and simulated permission failure. HTTP API/routes/cache and incremental SSE/resumption smoke passed. Mobile screenshots visually inspected.
+**Eval:** No new real hosted-inference, recognition, speech synthesis, WhatsApp receipt or eligibility-quality claim. Public scheme catalog unchanged.
+
+**Known issues / not done**
+- Docker/PostgreSQL server binaries remain unavailable here; real PostgreSQL test is explicitly skipped. Production migrations/service restart and Vercel edge behavior still need staging checks.
+- Sarvam/Groq/Qwen credentials were not supplied or used for live calls. Actual microphone/browser-provider quality, ten-priority-language speech quality and WAHA pairing/delivery remain manual validation requirements.
+- Third-party send acknowledgement and database commit are not atomic; ambiguous failures can duplicate a WhatsApp response. The UI never equates WAHA acceptance with verified recipient delivery.
+- The existing untracked frontend/.gitignore was present before this work and was left untouched. No staging, commit, push, merge or deployment was performed.
+
+**Next:** Review the branch; follow the V2.5 runbook for Docker/PostgreSQL, genuine hosted inference, mobile microphone, Sarvam and opted-in WhatsApp staging checks before considering publication/deployment.
+
+---
+
+## v2.4: 2026-10-29: Deployment infrastructure and persistent case memory
+**Who:** Codex with repository owner authorization
+**Goal:** Prepare the existing website for Vercel, Docker/EasyPanel, PostgreSQL and a separate WAHA service on the existing 6 GB VM; do not push or deploy.
+
+**Changed**
+- Standalone `frontend/` retains all public/dashboard/legacy assets. Its dependency-free Node build emits Vercel Build Output API HTTPS rewrites; API calls and native SSE stay on the frontend origin. Added asset drift checks and local proxy simulation.
+- Added pinned-Python non-root Docker runtime, writable public catalog scratch copy, one worker, bounded concurrency, health/readiness, staging Compose and separate official-image WAHA Compose template with a pairing volume and protected API/dashboard.
+- Added PostgreSQL case migrations/repository (SQLite adapter for offline validation), owner authorization via HttpOnly cookie or Bearer capability, validated facts, bounded minimized messages, pending questions, case status, guidance-review approvals, absolute retention, deletion and cleanup. Restores main and legacy sessions; interrupted legacy discovery is reported rather than replayed.
+- Added signed SHA-512 WAHA endpoint, hashed opt-in mappings, durable event/outbox deduplication and retry reuse; STOP clears the local case and cancels queued earlier replies. Production disables the old URL-secret webhook. Ambiguous external-send failures remain at-least-once, not exactly-once.
+- Hosted OpenAI-compatible inference keeps Groq/Qwen support, bounded SDK timeout, safe provider status/error classes, contextual extraction and metadata-only error logging. Production rejects local/mock providers. No genuine inference request was attempted.
+- Added deployment tests, mocked multilingual browser checks, Docker/PostgreSQL restart smoke tooling, exact EasyPanel/Vercel/WAHA/rollback instructions in DEPLOYMENT.md and origin/storage audit in docs/DEPLOYMENT_AUDIT_V24.md.
+
+**Tests:** Full suite 257 passed, 1 skipped, 0 failed; original 237-test baseline preserved. `pip check`, frontend synchronization/build, JavaScript syntax and whitespace checks pass. All five-width responsive browser checks pass through the built frontend/local reverse-proxy simulator, including English/Hindi/Marathi landing, navigation, chat retry/reset, Rescue, channels, legacy/docs. Separate en/hi/mr mocked browser checks pass for conversation, cookie authorization, saved-case reload and deletion. HTTP routes, API cache controls and incremental SSE/resume passed through the local proxy.
+**Eval:** No new real-world model-quality claim. Public scheme catalog unchanged.
+
+**Known issues / not done**
+- Docker build was attempted but Docker CLI/daemon is unavailable. No PostgreSQL server is installed; its dedicated test is explicitly skipped. Image execution, actual PostgreSQL migrations/service-restart persistence and resource consumption remain owner-run validation steps; SQLite tests are not a substitute.
+- Live Vercel rewrites, EasyPanel deployment, hosted-model requests and actual WAHA pairing/delivery are unverified. No URLs or external successes are fabricated.
+- Local filesystem permissions prevented writing `.github/workflows/deployment.yml`; the complete optional CI workflow is supplied as `deploy/github-actions-deployment.yml` for owner activation. Existing workflow is untouched.
+- Existing SECURITY.md was also write-protected; the V2.4 deployment audit explicitly supersedes its old in-memory-only notes. README links the current deployment guidance.
+- No staging, commit, GitHub push, cloud deployment, real outbound message or paid inference request was performed.
+
+**Next:** Review the feature branch and run the supplied Docker/PostgreSQL smoke on a Docker host. Then publish/deploy deliberately following DEPLOYMENT.md, configure exact runtime URLs/secrets and perform live synthetic checks before public traffic.
 
 ---
 

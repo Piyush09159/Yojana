@@ -125,6 +125,27 @@ has_eshram_card:
   description: "Registered on e-Shram as an unorganised worker"
 
 # ---------- education ----------
+enrolled_grade:
+  type: int
+  min: 1
+  max: 12
+  group: education
+  description: "Which school class/standard are you currently enrolled in? (1–12; leave unknown for college)"
+school_management:
+  type: enum
+  values: [government_local_body, aided, partially_aided, listed_education_centre, private_unaided, other]
+  group: education
+  description: "School type: local-government, aided, partially aided, listed education centre, private unaided or other; verify with the school"
+course_name:
+  type: str
+  group: education
+  description: "What course are you currently enrolled in? Do not include personal identifiers."
+course_year:
+  type: int
+  min: 1
+  max: 10
+  group: education
+  description: "Which year of your course are you enrolled in?"
 is_student:
   type: bool
   group: education

@@ -8,12 +8,14 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, ConfigDict
 
 from core.preflight import preflight_check
 from core.status_decoder import decode_status
 from discovery.catalog import load_catalog
+from . import case_store
+from .access import owner
 
 router = APIRouter(prefix="/api/rescue", tags=["rescue"])
 
@@ -40,6 +42,27 @@ class RescueRequest(BaseModel):
     records: dict[str, Record] = Field(default_factory=dict)
     facts: dict[str, bool | None] = Field(default_factory=dict)
     status_text: str | None = Field(default=None, max_length=300)
+    case_id: str | None = Field(default=None, max_length=64)
+
+
+def _save_case(body, result, request):
+    if not body.case_id:
+        return
+    if not case_store.enabled():
+        raise HTTPException(503, 'Persistent cases are not configured')
+    with case_store.transaction(body.case_id) as tx:
+        row = tx.session(body.case_id, owner(request))
+        if row['status'] == 'closed':
+            raise HTTPException(409, 'Case is closed. Reopen it before continuing.')
+        state = row['state']
+        # Keep actionable flags, not document names, birth dates, or portal text.
+        summary = {'scheme_id': body.scheme_id, 'facts': body.facts,
+                   'flags': result.get('flags', []), 'government_status_verified': False}
+        changed = state.get('rescue') != summary
+        state['rescue'] = summary
+        tx.save(body.case_id, state, owner(request), row['kind'])
+        if changed:
+            tx.execute("UPDATE case_sessions SET status='open' WHERE id=?", (body.case_id,))
 
 
 def _scheme(request: RescueRequest) -> dict[str, Any]:
@@ -70,10 +93,10 @@ def _preflight(request: RescueRequest, scheme: dict[str, Any]):
 
 
 @router.post("/preflight")
-def preflight(request: RescueRequest):
+def preflight(request: RescueRequest, http_request: Request):
     scheme = _scheme(request)
     result = _preflight(request, scheme)
-    return {
+    payload = {
         "scheme_id": request.scheme_id,
         "scheme_name": scheme["name"],
         "verified": True,
@@ -85,10 +108,12 @@ def preflight(request: RescueRequest):
         "source_url": scheme.get("source_url"),
         "disclaimer": "These checks use facts supplied by the user; no government records were queried.",
     }
+    _save_case(request, payload, http_request)
+    return payload
 
 
 @router.post("/diagnose")
-def diagnose(request: RescueRequest):
+def diagnose(request: RescueRequest, http_request: Request):
     scheme = _scheme(request)
     if not request.status_text or not request.status_text.strip():
         raise HTTPException(422, detail="status_text is required")
@@ -100,7 +125,7 @@ def diagnose(request: RescueRequest):
                                flags=pre.flags, schemes={request.scheme_id: scheme})
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(409, detail="Scheme status configuration is incomplete") from exc
-    return {
+    payload = {
         "scheme_id": request.scheme_id,
         "matched_status": result.matched_status,
         "match_score": result.match_score,
@@ -111,3 +136,5 @@ def diagnose(request: RescueRequest):
         "source_url": scheme.get("source_url"),
         "government_status_verified": False,
     }
+    _save_case(request, payload, http_request)
+    return payload

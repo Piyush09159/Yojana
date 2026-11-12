@@ -1,0 +1,12 @@
+{
+  "name": "yojana-pilot-frontend",
+  "version": "2.5.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  }
+}

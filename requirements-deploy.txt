@@ -1,0 +1,3 @@
+-r requirements.lock.txt
+# psycopg (case store and PostgreSQL scheme catalog) and tzdata are pinned once, in requirements.lock.txt
+redis==6.4.0

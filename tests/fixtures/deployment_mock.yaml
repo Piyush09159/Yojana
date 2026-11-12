@@ -1,0 +1,27 @@
+"Person's message: I am 62 in Maharashtra":
+  language: en
+  facts: {age: 62, state: maharashtra}
+  intent: give_info
+"Person's message: मेरी उम्र 62 है":
+  language: hi
+  facts: {age: 62, state: maharashtra}
+  intent: give_info
+"Person's message: माझे वय 62 आहे":
+  language: mr
+  facts: {age: 62, state: maharashtra}
+  intent: give_info
+"Person's message: I am 62, retired in Maharashtra and need financial assistance.":
+  language: en
+  facts: {age: 62, occupation: retired, state: maharashtra}
+  intent: give_info
+  requested_category: income
+"Person's message: I am 22, a college undergraduate in Trimbakeshwar Nashik Maharashtra seeking scholarships.":
+  language: en
+  facts: {age: 22, occupation: student, is_student: true, current_study_level: undergraduate, state: maharashtra, district: nashik}
+  intent: give_info
+  requested_category: education
+"Person's message: I am 62, retired in Maharashtra, income 40000 a year, seeking financial assistance.":
+  language: en
+  facts: {age: 62, occupation: retired, state: maharashtra, annual_family_income_inr: 40000}
+  intent: give_info
+  requested_category: income

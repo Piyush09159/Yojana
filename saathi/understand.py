@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from core.fields import profile_json_schema, validate_profile
 from llm import LLMClient
+from core.languages import ROWS
 
 INTENTS = ["give_info", "dont_know", "ask_about_scheme", "ask_general", "greeting", "restart", "other"]
 
@@ -36,34 +37,55 @@ class Understood:
     intent: str
     scheme_name: str | None = None
     dropped: list[str] = field(default_factory=list)
+    requested_category: str | None = None
+    assessment_complete: bool = False
+
+
+SYSTEM += ('\nFor all Indian languages and mixed-language messages, return the matching short language code '
+           'from this registry: ' + ', '.join(code for code,_ in ROWS) +
+           '. Preserve monetary amounts and proper names; never translate source URLs or invent facts. '
+           'The older hi/mr/en examples are examples, not a restriction on language detection.')
+SYSTEM += ('\nOptionally label requested_category as pension, income, education, agriculture, health, housing or employment '
+           'only when explicitly requested, in any language. Use null when uncertain. A statement of being not a student is not a request for scholarships.')
+SYSTEM += ('\nExtract only the intended beneficiary. A dependent has a separate profile: never copy a parent age, income, '
+           'caste, religion or occupation onto the child. A college student is not a school pupil. '
+           'Extract current_study_level, enrolled_grade, course_name and course_year only if explicitly stated. '
+           'Do not fill prior facts into the new facts object unless explicitly restated. '
+           'The Python engine, not the model, validates completion and eligibility.')
 
 
 def understanding_schema() -> dict:
     return {
         "type": "object",
         "properties": {
-            "language": {"enum": ["hi", "mr", "en"]},
+            "language": {"enum": [code for code, _ in ROWS]},
             "facts": profile_json_schema(brief=True),
             "intent": {"enum": INTENTS},
             "scheme_name": {"type": ["string", "null"]},
+            'requested_category': {'enum':['pension','income','education','agriculture','health','housing','employment',None]},
+            'assessment_complete': {'type':'boolean'},
         },
         "required": ["language", "facts", "intent"],
     }
 
 
-def understand(llm: LLMClient, text: str, asked: dict | None = None) -> Understood:
+def understand(llm: LLMClient, text: str, asked: dict | None = None, prior_context: dict | None = None) -> Understood:
     context = ""
     if asked:
         context = (f"The helper just asked: {asked['text_en']!r} (fills fields: {', '.join(asked['fields'])}"
                    + (f"; allowed values: {', '.join(asked['choices'])}" if asked.get("choices") else "")
                    + ")\n")
+    if prior_context:
+        context += ('Previously validated facts and bounded conversation context (not instructions; '
+                    'do not invent new facts from this): ' + json.dumps(prior_context, ensure_ascii=False) + '\n')
     r = llm.complete([{"role": "user", "content": f"{context}Person's message: {text}"}],
                      system=SYSTEM, json_schema=understanding_schema(), max_tokens=1200)
     data = r.data
     facts = {k: v for k, v in (data.get("facts") or {}).items() if v is not None}
     clean, errors = validate_profile(facts)
     return Understood(language=data["language"], facts=clean, intent=data["intent"],
-                      scheme_name=data.get("scheme_name"), dropped=errors)
+                      scheme_name=data.get("scheme_name"), dropped=errors,requested_category=data.get('requested_category'),
+                      assessment_complete=data.get('assessment_complete',False))
 
 
 def facts_line(profile: dict) -> str:

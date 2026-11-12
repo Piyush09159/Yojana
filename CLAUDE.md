@@ -98,12 +98,24 @@ scheme_saathi/
   llm/                 swappable LLM layer (section 5): base.py, config.py, log.py, providers/
   ingest/              sources.yaml (scrape policy), fetch.py, extract.py, __main__.py (python -m ingest)
   discovery/           search.py (SerpAPI/Tavily/Fake), catalog.py (curated + discovered), discover.py
-  store/               the scheme database (data/schemes.db): db.py, migrate.py
+  store/               the scheme database: db.py picks SQLite (data/schemes.db, default) or
+                       PostgreSQL (SCHEME_DATABASE_URL); sqlite.py, pg.py (same functions), derive.py
+                       (rule/target/name rows from a scheme dict), pg_admin.py, sql/*.sql, migrate.py
   saathi/              conversation: understand.py, chat.py, shortlist.py, explain.py (python -m saathi)
                        investigator.py (v0.8 reasoning loop), questioner.py (reason-based questions)
   web/                 FastAPI app (app.py, session.py) + static/ page (python -m web, http://localhost:8000)
+                       result_review.py (WhatsApp PROCEED/CHANGE/HELP gate), whatsapp_delivery.py (PDF via
+                       WAHA sendFile), followup_calls.py + bolna.py (consented Bolna calls), delivery_worker.py
+                       (runner). All behind flags, default off: docs/RESULT_DELIVERY.md
   ingest/sources_mh.yaml, source_map.py, crawl.py   Maharashtra agency/ZP source map, probe, site crawler
   core/awareness.py, schemes/flagship.yaml          awareness high/medium/low for "lesser-known" results
+  agents/              the five agents (reader, replier, scout, extractor, verifier) + runner.py:
+                       run_agent() never raises (cache, budget, shared client, validate, degrade)
+  saathi/orchestrator.py  the one conversation state machine (WhatsApp, /app, terminal);
+                       short_answer.py (code reads short replies), reply.py (en/hi/mr templates),
+                       sufficiency.py (good match, segment), guard.py, senders.py
+  worker/              job lanes: gapfill -> extract -> notify (store/runtime.py job queue)
+  docs/AGENT_ORCHESTRATION.md  how the agents work together (read before changing agents)
   scripts/llm_smoke.py live check of configured providers (uses the network)
   eval.py              prints accuracy numbers
   demo.py              interactive terminal demo (no LLM)
@@ -152,7 +164,7 @@ status_map: { "status text": [ {action, weight, boost_if?} ] }
 
 Ops: `eq ne gt gte lt lte in not_in`. A missing profile field gives `unknown`, which gives `needs_info`. A hard failure overrides unknowns. A failure within `near_miss` tolerance gives `near_miss`.
 
-**Fields:** `schemes/fields.yaml` is the only allowed vocabulary (46 fields: personal, location incl. all 36 states/UTs, money, work, education, family, land, housing, exclusions, scheme lists, dependency flags). `core/fields.py` has `load_fields`, `check_value`, `validate_profile` and `profile_json_schema` (give this schema to the extractor LLM). The loader rejects a rule whose field is unknown, whose value has the wrong type or enum value, an order op on a non-numeric field, a bad `near_miss`, a dependency id that is not a field, and questions that set unknown fields. Add a field only when several schemes need it; otherwise use `unmapped_criteria`.
+**Fields:** `schemes/fields.yaml` is the only allowed vocabulary (41 fields: personal, location incl. all 36 states/UTs, money, work, education, family, land, housing, exclusions, scheme lists, dependency flags). `core/fields.py` has `load_fields`, `check_value`, `validate_profile` and `profile_json_schema` (give this schema to the extractor LLM). The loader rejects a rule whose field is unknown, whose value has the wrong type or enum value, an order op on a non-numeric field, a bad `near_miss`, a dependency id that is not a field, and questions that set unknown fields. Add a field only when several schemes need it; otherwise use `unmapped_criteria`.
 
 ---
 
@@ -321,6 +333,19 @@ python -m ingest --probe-sources mh    # 1. check which source domains work (no 
 python -m ingest --map-urls mh         # 2. find every scheme page and queue it (no LLM, free)
 python -m ingest --extract-queued --limit 200       # 3. read queued pages with the LLM (resumable)
 python -m store migrate | export | stats | verify <id>   # database: import, dump, counts, mark checked
+python -m store pg-init | pg-import | quality            # PostgreSQL (SCHEME_DATABASE_URL): schema, copy, report
+python -m store pg-status                                # read-only: pending migrations + row counts (run before pg-init)
+python scripts/check_pg_parity.py                        # Postgres answers == SQLite answers
+python scripts/try_flow.py [--web N] [--update N] "<msg>" # live: one message through every step
+python -m saathi [--worker] [--debug]                   # live: chat through the orchestrator
+python -m worker [--once|--batch N|--status]            # live: background agent lanes
+python -m stt_service                                   # local speech-to-text service (requirements-stt.txt; docs/LOCAL_STT.md)
+python scripts/bench_stt.py --audio-dir D --model-dir M  # STT WER/CER, CPU latency, memory
+python scripts/voice_smoke_server.py; python scripts/voice_browser_smoke.py mic.wav  # real-Chrome /voice check (docs/BROWSER_VOICE.md)
+docker build -f Dockerfile.pdf -t yojana-pdf .           # application-guide PDF service (Render; docs/PDF_SERVICE.md)
+python scripts/make_pdf_examples.py                      # synthetic example payloads -> pdf_service/examples/
+python -m web.delivery_worker [--once]                   # confirmed WhatsApp results: PDF guide, call offer, calls
+python -m agents.eval --live [--pace S] [reader|verifier] # live: score each agent on its gold set
 python scripts/bench_llm.py [provider:model ...]   # compare models (uses tokens)
 .\start.ps1 [-NoWeb|-Update|-Stats|-Test|-Debug]   # Windows launcher (start.bat = double-click)
 ```

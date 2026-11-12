@@ -1,0 +1,24 @@
+# yojana-stt: self-hosted speech-to-text, private network only (no EasyPanel domain).
+# Build:  docker build -f Dockerfile.stt -t yojana-stt .
+# Model weights are downloaded once at build time at a pinned revision, so restarts never download.
+# To use a persistent volume instead, build with --build-arg STT_BAKE_MODELS="" and run
+# `python -m stt_service.download_model small --dir /models` once with /models mounted.
+FROM python:3.13.17-slim-bookworm
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 \
+    HF_HUB_DISABLE_TELEMETRY=1 HF_HUB_OFFLINE=1 \
+    STT_MODEL_DIR=/models STT_PORT=8001 LOCAL_STT_MODEL=small LOCAL_STT_COMPUTE_TYPE=int8 \
+    LOCAL_STT_BEAM_SIZE=1 STT_CPU_THREADS=2 STT_CONCURRENCY=1 OMP_NUM_THREADS=2
+WORKDIR /app
+COPY requirements-stt.txt ./
+RUN pip install --no-cache-dir -r requirements-stt.txt
+COPY stt_service ./stt_service
+ARG STT_BAKE_MODELS=small
+RUN mkdir -p /models && if [ -n "$STT_BAKE_MODELS" ]; then \
+      HF_HUB_OFFLINE=0 python -m stt_service.download_model $STT_BAKE_MODELS --dir /models \
+      && rm -rf /models/*/.cache; fi \
+    && chown -R 10001:10001 /models
+USER 10001:10001
+EXPOSE 8001
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+  CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/ready' % os.environ.get('STT_PORT','8001'),timeout=4)"
+CMD ["python", "-m", "stt_service"]

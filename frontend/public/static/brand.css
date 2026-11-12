@@ -1,0 +1,15 @@
+/* Shared, local-first typography and civic-tech palette. No font trackers. */
+:root {
+  --brand-navy: #102d3c;
+  --brand-green: #087c71;
+  --brand-mint: #dff2e9;
+  --brand-saffron: #c6602b;
+  --brand-font: "Segoe UI", "Nirmala UI", "Noto Sans Devanagari", system-ui, sans-serif;
+}
+body { font-family: var(--brand-font); }
+.wordmark { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -.055em; font-size: 24px; text-decoration: none; color: var(--brand-navy); white-space: nowrap; }
+.wordmark svg { width: 35px; height: 35px; flex: none; }
+.wordmark .pilot { color: var(--brand-green); }
+.wordmark:focus-visible { outline: 3px solid var(--brand-saffron); outline-offset: 5px; border-radius: 5px; }
+html[lang="hi"] h1, html[lang="mr"] h1,
+html[lang="hi"] h2, html[lang="mr"] h2 { letter-spacing: 0; line-height: 1.45; }
